@@ -13,7 +13,6 @@
    - BLS 官方 API → 非農就業、失業率;DBnomics(BEA 鏡像)→ 核心 PCE 物價指數
    - fawazahmed0 currency-api(jsDelivr / pages.dev 備援)→ 新台幣對美元、
      日圓、歐元、人民幣的歷史匯率(ECB 沒有 TWD)
-   - TradingView widget → DXY / VIX / 各國股市(含台灣加權)/ 加密與 AI 即時報價
    原則:各資料源獨立抓取,單一來源失敗不影響其他區塊;
         重新抓取時保留前一次渲染(降透明度),不跳版。
    ============================================================ */
@@ -135,10 +134,11 @@ const state = {
   foreign: null,    // [{ date, net }] 台股外資買賣超(億元,升冪,僅交易日)
 };
 
-// 介面狀態:兩張熱力圖各自的觀察週數、檢視模式與排序週(sortAgo=k 週前,0=本週);台幣匯率卡的觀察週數
+// 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序週(sortAgo=k 週前,0=本週)
+// 與色階(pct=原始漲跌 %、z=除以自身週波動度的標準化);台幣匯率卡的觀察週數
 const ui = {
-  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,
-  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0,
+  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,  assetScale: 'pct',
+  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0, regionScale: 'pct',
   twdWeeks: 12,
 };
 
@@ -171,6 +171,11 @@ function fmtBp(n, digits = 1) {
 }
 
 function pctChange(from, to) { return (to / from - 1) * 100; }
+
+function fmtZ(z) {
+  if (!Number.isFinite(z)) return '—';
+  return `${z > 0 ? '+' : ''}${z.toFixed(1)}σ`;
+}
 
 // 讀 CSS 變數(深淺模式切換時重讀即可拿到當前值)
 function cssVar(name) {
@@ -597,12 +602,30 @@ function flowVerdict(thisW, prevW) {
 
 // ===== 熱力圖資料列 =====
 
+// 週漲跌波動度(σ,對 0 的均方根):一律以最長 12 週估計(不受觀察期間影響);
+// 非空樣本 <3 不可靠,回 null(由 attachZ 用全體中位數補)
+function weeklySigma12(series) {
+  const pcts = weeklyChanges(series, 12).map(c => c.pct).filter(Number.isFinite);
+  if (pcts.length < 3) return null;
+  return Math.sqrt(pcts.reduce((s, v) => s + v * v, 0) / pcts.length) || null;
+}
+
+// 每格掛上標準化值 z = 該週漲跌 ÷ 自身 σ:「這個動作對該資產有多不尋常」,跨資產可比
+function attachZ(rows) {
+  const sigmas = rows.map(r => r.sigma).filter(Number.isFinite).sort((a, b) => a - b);
+  const fallback = sigmas.length ? sigmas[Math.floor(sigmas.length / 2)] : null;
+  for (const r of rows) {
+    const s = r.sigma ?? fallback;   // 累積中的列先用全體中位數當尺
+    for (const c of r.cells) c.z = (c.pct !== null && s) ? c.pct / s : null;
+  }
+}
+
 // 資產列:name、src(資料源)、cells(每週漲跌)
 function assetRows(nWeeks) {
   const rows = [];
   const add = (name, series, src) => {
     if (!series || series.length < 2) return;
-    rows.push({ name, src, cells: weeklyChanges(series, nWeeks) });
+    rows.push({ name, src, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
   };
 
   if (state.fxRates) {
@@ -621,6 +644,7 @@ function assetRows(nWeeks) {
   }
 
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
+  attachZ(rows);
   return rows;
 }
 
@@ -629,27 +653,26 @@ function regionRows(nWeeks) {
   const rows = [];
   if (state.fxRates) {
     for (const r of REGIONS) {
-      rows.push({
-        name: r.name,
-        src: r.pair,
-        cells: weeklyChanges(toSeries(state.fxDates, fxSeries(r.code).map(v => 1 / v)), nWeeks),
-      });
+      const series = toSeries(state.fxDates, fxSeries(r.code).map(v => 1 / v));
+      rows.push({ name: r.name, src: r.pair, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
     }
   }
   // 台灣:ECB 沒有 TWD,改用 scanner 的美元兌台幣(取倒數 = 台幣價值)
   const twdSeries = scannerSeries(TWD_REGION.sym)
     .map(p => ({ date: p.date, value: 1 / p.value }));
   if (twdSeries.length >= 2) {
-    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells: weeklyChanges(twdSeries, nWeeks) });
+    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells: weeklyChanges(twdSeries, nWeeks), sigma: weeklySigma12(twdSeries) });
   }
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
+  attachZ(rows);
   return rows;
 }
 
-// 依「ago 週前」該欄的漲跌排序(高→低,無資料排最後);該欄值掛到 r.sortVal 供右欄數字用
-function sortRowsByWeek(rows, nWeeks, ago) {
+// 依「ago 週前」該欄排序(高→低,無資料排最後);useZ 時以標準化值為準。
+// 該欄值掛到 r.sortVal 供右欄數字用(pct 模式=漲跌 %、z 模式=σ)
+function sortRowsByWeek(rows, nWeeks, ago, useZ) {
   const idx = nWeeks - 1 - ago;
-  for (const r of rows) r.sortVal = r.cells[idx]?.pct ?? null;
+  for (const r of rows) r.sortVal = (useZ ? r.cells[idx]?.z : r.cells[idx]?.pct) ?? null;
   return rows.sort((a, b) => (b.sortVal ?? -Infinity) - (a.sortVal ?? -Infinity));
 }
 
@@ -659,9 +682,10 @@ function weekLabel(idx, nWeeks) {
   return idx === nWeeks - 1 ? '本週' : `-${nWeeks - 1 - idx}週`;
 }
 
-function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo) {
+function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo, useZ) {
   const container = $(containerSel);
   if (!rows.length) { container.replaceChildren(); return; }
+  const cellVal = (c) => (useZ ? c.z : c.pct) ?? null;   // 色階取值:原始 % 或標準化 σ
 
   const width = Math.max(320, container.clientWidth || 800);
   const labelW = Math.min(132, Math.max(88, Math.round(width * 0.16)));
@@ -682,9 +706,10 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
   const cMuted = cssVar('--text-muted');
   const surface = cssVar('--surface-1');   // 「資料累積中」格用白底(卡片底色),與資料格區分
 
-  // 色階:對稱 diverging,依資料絕對值決定上限(1.5%~8% 之間夾住)
-  const absVals = rows.flatMap(r => r.cells.filter(c => c.pct !== null).map(c => Math.abs(c.pct)));
-  const maxAbs = Math.min(8, Math.max(1.5, d3.max(absVals) ?? 1.5));
+  // 色階:對稱 diverging。原始 % 依資料絕對值決定上限(1.5%~8% 夾住);
+  // 標準化固定 ±2.5σ(z 本身就是共同尺度,|σ|>2 = 不尋常)
+  const absVals = rows.flatMap(r => r.cells.map(cellVal).filter(v => v !== null).map(Math.abs));
+  const maxAbs = useZ ? 2.5 : Math.min(8, Math.max(1.5, d3.max(absVals) ?? 1.5));
   const color = d3.scaleLinear()
     .domain([-maxAbs, 0, maxAbs])
     .range([cOut, cMid, cIn])
@@ -766,13 +791,13 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .on('mouseleave', hideTooltip)
       .on('click', () => clickSort(ago));
   }
-  // 右欄數字的小字頭:標明顯示的是選中週的漲跌
+  // 右欄數字的小字頭:標明顯示的是選中週的漲跌(pct 模式=%、z 模式=σ)
   cols.append('text')
     .attr('x', colX(nWeeks) + 8)
     .attr('y', headerH - 8)
     .attr('font-size', 10)
     .attr('fill', cMuted)
-    .text(`${weekLabel(sortIdx, nWeeks)} %`);
+    .text(`${weekLabel(sortIdx, nWeeks)} ${useZ ? 'σ' : '%'}`);
 
   // 列:keyed join——排序切換時列的 y 位移做 transition,列內容(顏色、數字、tooltip)每次重建
   const rowY = new Map(rows.map((r, i) => [r.name, headerH + i * rowH]));
@@ -796,13 +821,14 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .text(row.name);
 
     row.cells.forEach((cell, j) => {
+      const v = cellVal(cell);
       const rect = g.append('rect')
         .attr('x', colX(j))
         .attr('y', 0)
         .attr('width', Math.max(2, cellW))
         .attr('height', cellH)
         .attr('rx', 5)
-        .attr('fill', cell.pct === null ? `url(#${patId})` : color(cell.pct))
+        .attr('fill', v === null ? `url(#${patId})` : color(v))
         .attr('stroke', ink)
         .attr('stroke-width', 1.4)
         .attr('cursor', 'pointer');
@@ -810,14 +836,15 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
         showTooltip([
           { text: `${row.name} · ${weekLabel(j, nWeeks)}`, cls: 'tt-label' },
           { text: `${cell.from} → ${cell.to}` , cls: 'tt-label' },
-          { text: cell.pct === null ? '—(資料累積中)' : fmtPct(cell.pct), cls: 'tt-value' },
+          { text: cell.pct === null ? '—(資料累積中)'
+            : useZ ? `${fmtPct(cell.pct)}(${fmtZ(cell.z)})` : fmtPct(cell.pct), cls: 'tt-value' },
           { text: '點擊:依此週排序', cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
       }).on('mouseleave', hideTooltip)
         .on('click', () => clickSort(nWeeks - 1 - j));
     });
 
-    // 最右:選中週的數字
+    // 最右:選中週的數字(pct 模式=漲跌 %、z 模式=σ)
     g.append('text')
       .attr('x', colX(nWeeks) + 8)
       .attr('y', cellH / 2 + 4)
@@ -825,7 +852,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .attr('font-weight', 700)
       .attr('fill', row.sortVal === null ? cMuted : cText)
       .attr('font-variant-numeric', 'tabular-nums')
-      .text(row.sortVal === null ? '—' : fmtPct(row.sortVal));
+      .text(row.sortVal === null ? '—' : useZ ? fmtZ(row.sortVal) : fmtPct(row.sortVal));
   });
 
   // 圖例:漸層色帶 + 累積中格紋
@@ -851,9 +878,9 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
     .attr('rx', 4).attr('fill', `url(#${patId}-leg)`).attr('stroke', ink).attr('stroke-width', 1.4);
 
   legend.replaceChildren(
-    el('span', '', `${fmtPct(-maxAbs, 1)}(流出)`),
+    el('span', '', useZ ? `−${maxAbs}σ(異常流出)` : `${fmtPct(-maxAbs, 1)}(流出)`),
     lsvg.node(),
-    el('span', '', `${fmtPct(maxAbs, 1)}(流入)`),
+    el('span', '', useZ ? `+${maxAbs}σ(異常流入)` : `${fmtPct(maxAbs, 1)}(流入)`),
     swatch.node(),
     el('span', '', '資料累積中'),
   );
@@ -887,6 +914,22 @@ function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
   }
   table.appendChild(tbody);
   wrap.replaceChildren(table);
+}
+
+// 卡內摘要:本週方向翻轉的列(由流出轉流入/由流入轉流出)——翻轉比持續更值得注意
+function flipSummary(rows) {
+  const toIn = [], toOut = [];
+  for (const r of rows) {
+    const prev = r.cells[r.cells.length - 2]?.pct ?? null;
+    const v = flowVerdict(r.latest, prev);
+    if (v === '由流出轉流入') toIn.push(r.name);
+    if (v === '由流入轉流出') toOut.push(r.name);
+  }
+  const cap = (arr) => arr.length > 4 ? `${arr.slice(0, 4).join('、')} 等 ${arr.length} 項` : arr.join('、');
+  let s = '';
+  if (toIn.length) s += `本週轉為流入:${cap(toIn)}。`;
+  if (toOut.length) s += `本週轉為流出:${cap(toOut)}。`;
+  return s;
 }
 
 // 卡內摘要:本週錢停在哪、從哪撤出(呼叫端須傳入「按本週漲幅排序」的列,不可餵其他排序)
@@ -927,12 +970,14 @@ function renderAssetCard() {
   // 摘要固定用「本週」語意(用按本週排序的複本算),不隨排序週改變
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
   $('#asset-summary').textContent =
-    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + oilSpreadText() + copperGoldText();
+    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + flipSummary(rows) +
+    oilSpreadText() + copperGoldText();
   if (ui.assetSortAgo > ui.assetWeeks - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序週回到本週
-  const sorted = sortRowsByWeek(rows, ui.assetWeeks, ui.assetSortAgo);
+  const useZ = ui.assetScale === 'z';
+  const sorted = sortRowsByWeek(rows, ui.assetWeeks, ui.assetSortAgo, useZ);
   if (ui.assetView === 'chart') {
     renderHeatmap('#asset-heatmap', '#asset-legend', sorted, ui.assetWeeks, 'hatch-asset',
-      ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); });
+      ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); }, useZ);
   } else {
     renderFlowTable('#asset-table', sorted, ui.assetWeeks, '資產', true);
   }
@@ -942,12 +987,14 @@ function renderRegionCard() {
   const rows = regionRows(ui.regionWeeks);
   if (!rows.length) return;
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
-  $('#region-summary').textContent = flowSummary(byLatest, '近一週資金傾向流入', '傾向流出');
+  $('#region-summary').textContent =
+    flowSummary(byLatest, '近一週資金傾向流入', '傾向流出') + flipSummary(rows);
   if (ui.regionSortAgo > ui.regionWeeks - 1) ui.regionSortAgo = 0;
-  const sorted = sortRowsByWeek(rows, ui.regionWeeks, ui.regionSortAgo);
+  const useZ = ui.regionScale === 'z';
+  const sorted = sortRowsByWeek(rows, ui.regionWeeks, ui.regionSortAgo, useZ);
   if (ui.regionView === 'chart') {
     renderHeatmap('#region-heatmap', '#region-legend', sorted, ui.regionWeeks, 'hatch-region',
-      ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); });
+      ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); }, useZ);
   } else {
     renderFlowTable('#region-table', sorted, ui.regionWeeks, '區域', false);
   }
@@ -1840,78 +1887,6 @@ function renderForeignCard() {
   renderForeignRead(rows);
 }
 
-// ===== TradingView widget =====
-
-function mountTradingView() {
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const container = $('#tv-widget');
-  container.replaceChildren();
-
-  const wrap = el('div', 'tradingview-widget-container');
-  wrap.appendChild(el('div', 'tradingview-widget-container__widget'));
-  const script = document.createElement('script');
-  script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js';
-  script.async = true;
-  script.text = JSON.stringify({
-    colorTheme: dark ? 'dark' : 'light',
-    dateRange: '1M',
-    showChart: true,
-    locale: 'zh_TW',
-    width: '100%',
-    height: 420,
-    isTransparent: true,
-    showSymbolLogo: true,
-    tabs: [
-      {
-        title: '避險與利率',
-        symbols: [
-          { s: 'CAPITALCOM:DXY', d: '美元指數 DXY' },
-          { s: 'TVC:US10Y', d: '美債 10 年殖利率' },
-          { s: 'TVC:US02Y', d: '美債 2 年殖利率' },
-          { s: 'TVC:GOLD', d: '黃金現貨' },
-          { s: 'CBOE:VIX', d: 'VIX 恐慌指數' },
-          { s: 'FX_IDC:USDTWD', d: '美元兌台幣' },
-        ],
-      },
-      {
-        title: '全球股市',
-        symbols: [
-          { s: 'SP:SPX', d: '標普 500' },
-          { s: 'NASDAQ:IXIC', d: '那斯達克' },
-          { s: 'TVC:NI225', d: '日經 225' },
-          { s: 'TVC:HSI', d: '恆生指數' },
-          { s: 'TWSE:IX0001', d: '台灣加權' },
-          { s: 'XETR:DAX', d: '德國 DAX' },
-        ],
-      },
-      {
-        title: '能源與綠色轉型',
-        symbols: [
-          { s: 'TVC:USOIL', d: 'WTI 原油' },
-          { s: 'TVC:UKOIL', d: '布蘭特原油' },
-          { s: 'CAPITALCOM:NATURALGAS', d: '天然氣' },
-          { s: 'CAPITALCOM:COPPER', d: '銅' },
-          { s: 'NASDAQ:ICLN', d: '全球綠能 ETF' },
-          { s: 'AMEX:TAN', d: '太陽能 ETF' },
-          { s: 'AMEX:LIT', d: '鋰電池 ETF' },
-        ],
-      },
-      {
-        title: '加密與 AI',
-        symbols: [
-          { s: 'BITSTAMP:BTCUSD', d: '比特幣' },
-          { s: 'BITSTAMP:ETHUSD', d: '以太幣' },
-          { s: 'NASDAQ:NVDA', d: '輝達' },
-          { s: 'NASDAQ:AIQ', d: 'AI ETF(AIQ)' },
-          { s: 'NASDAQ:BOTZ', d: '機器人與 AI ETF' },
-        ],
-      },
-    ],
-  });
-  wrap.appendChild(script);
-  container.appendChild(wrap);
-}
-
 // ===== 更新流程 =====
 
 function renderAll() {
@@ -2027,6 +2002,18 @@ function initWeekToggle(sel, key, rerender) {
   });
 }
 
+// 色階切換:原始漲跌 % ↔ 波動標準化(σ)
+function initScaleToggle(sel, key, rerender) {
+  const box = $(sel);
+  box.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('button[data-scale]');
+    if (!btn) return;
+    ui[key] = btn.dataset.scale;
+    for (const b of box.querySelectorAll('button')) b.classList.toggle('active', b === btn);
+    rerender();
+  });
+}
+
 function initViewToggle(btnChartSel, btnTableSel, viewKey, chartSels, tableSel, rerender) {
   const btnChart = $(btnChartSel), btnTable = $(btnTableSel);
   const setView = (view) => {
@@ -2045,13 +2032,13 @@ function initViewToggle(btnChartSel, btnTableSel, viewKey, chartSels, tableSel, 
 }
 
 function main() {
-  mountTradingView();
-
   $('#refresh-btn').addEventListener('click', refreshAll);
 
   initWeekToggle('#twd-weeks', 'twdWeeks', renderTwdCard);
   initWeekToggle('#asset-weeks', 'assetWeeks', renderAssetCard);
   initWeekToggle('#region-weeks', 'regionWeeks', renderRegionCard);
+  initScaleToggle('#asset-scale', 'assetScale', renderAssetCard);
+  initScaleToggle('#region-scale', 'regionScale', renderRegionCard);
   initViewToggle('#btn-asset-chart', '#btn-asset-table', 'assetView',
     ['#asset-heatmap', '#asset-legend'], '#asset-table', renderAssetCard);
   initViewToggle('#btn-region-chart', '#btn-region-table', 'regionView',
@@ -2064,11 +2051,8 @@ function main() {
     resizeTimer = setTimeout(renderAll, 200);
   });
 
-  // 深淺模式切換:重掛 widget、重讀 CSS 變數重畫
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    mountTradingView();
-    renderAll();
-  });
+  // 深淺模式切換:重讀 CSS 變數重畫
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', renderAll);
 
   refreshAll();
   setInterval(refreshFX, FX_POLL_MS);

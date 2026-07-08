@@ -206,7 +206,6 @@ section { margin-bottom: 34px; }
 #asset-card  { --card-accent: var(--mem-yellow); }
 #region-card { --card-accent: #3fd1d1; }
 #bond-card   { --card-accent: var(--mem-pink); }
-#tv-card     { --card-accent: var(--mem-orange); }
 
 /* 資料重新載入:保留前次渲染、降透明度,不跳版 */
 .refreshing { opacity: 0.55; transition: opacity 0.2s; }
@@ -385,9 +384,6 @@ section { margin-bottom: 34px; }
 }
 .tooltip .tt-value { font-weight: 800; font-size: 14px; }
 .tooltip .tt-label { color: var(--text-secondary); }
-
-/* ===== TradingView 區 ===== */
-.tv-widget { min-height: 420px; margin-top: 12px; }
 
 /* ===== 頁尾 ===== */
 .page-footer {

@@ -99,13 +99,17 @@
           <button type="button" data-weeks="8">8 週</button>
           <button type="button" data-weeks="12">12 週</button>
         </div>
+        <div class="seg-toggle" id="asset-scale" role="tablist">
+          <button type="button" data-scale="pct" class="active">漲跌 %</button>
+          <button type="button" data-scale="z">波動標準化</button>
+        </div>
         <div class="seg-toggle" role="tablist">
           <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">熱力圖</button>
           <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
         </div>
       </div>
     </div>
-    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出),顏色越深幅度越大。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。</p>
+    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出),顏色越深幅度越大。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。切到「波動標準化」,顏色改為該週漲跌除以各資產自身的週波動度(σ):比特幣週漲 3% 是日常、美元指數漲 3% 是大事,標準化後的深淺代表「這個動作對該資產有多不尋常」,跨資產才可比;|σ| 超過 2 就值得注意。</p>
     <p class="card-summary" id="asset-summary"></p>
     <div id="asset-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="asset-legend"></div>
@@ -124,27 +128,22 @@
           <button type="button" data-weeks="8">8 週</button>
           <button type="button" data-weeks="12">12 週</button>
         </div>
+        <div class="seg-toggle" id="region-scale" role="tablist">
+          <button type="button" data-scale="pct" class="active">升貶 %</button>
+          <button type="button" data-scale="z">波動標準化</button>
+        </div>
         <div class="seg-toggle" role="tablist">
           <button type="button" id="btn-region-chart" class="active" aria-pressed="true">熱力圖</button>
           <button type="button" id="btn-region-table" aria-pressed="false">表格</button>
         </div>
       </div>
     </div>
-    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。</p>
+    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。切到「波動標準化」,顏色改以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常。</p>
     <p class="card-summary" id="region-summary"></p>
     <div id="region-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="region-legend"></div>
     <div id="region-table" class="region-table" hidden></div>
     <p class="card-footnote">台灣(美元兌台幣)的報價來自 TradingView(歐洲央行不提供台幣匯率),更早的逐週資料由本頁跨日累積推算,啟用初期會顯示白底斜線格,約四週後補齊。</p>
-  </section>
-
-  <!-- ===== TradingView 即時行情 ===== -->
-  <section class="card" id="tv-card">
-    <div class="card-head">
-      <h2 class="card-title">即時行情(TradingView)</h2>
-    </div>
-    <p class="card-desc">美元指數 DXY、美債殖利率、VIX、各國股市、能源與 AI 相關標的即時報價,由 TradingView 提供。</p>
-    <div id="tv-widget" class="tv-widget"></div>
   </section>
 
   <footer class="page-footer">
@@ -154,8 +153,7 @@
     台股外資買賣超 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日收盤後)·
     非農就業與失業率 — <a href="https://www.bls.gov/developers/" target="_blank" rel="noopener">美國勞工統計局 BLS</a> ·
     核心 PCE — BEA(經 <a href="https://db.nomics.world" target="_blank" rel="noopener">DBnomics</a>)·
-    新台幣匯率 — <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">currency-api</a>(每日更新)·
-    即時行情(含台灣加權)— TradingView widget。</p>
+    新台幣匯率 — <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">currency-api</a>(每日更新)。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>
 
