@@ -289,7 +289,35 @@ section { margin-bottom: 34px; }
 .bond-stat .delta .period { color: var(--text-muted); }
 .bond-stat.inverted { background: var(--mem-yellow); color: #17141a; }
 .bond-stat.inverted .label, .bond-stat.inverted .delta .period { color: #4c4653; }
-.bond-stat.vix { grid-column: 1 / -1; }   /* VIX 盒橫跨整列,股債兩端一眼分清 */
+
+/* 迷你時間趨勢(VIX + 核心 PCE / 非農 / 失業率) */
+.macro-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(225px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.macro-box {
+  border: 2.5px solid var(--ink);
+  border-radius: 12px;
+  padding: 10px 14px 8px;
+  box-shadow: 4px 4px 0 var(--ink);
+  background: var(--surface-1);
+}
+.macro-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.macro-head .label { font-size: 12px; color: var(--text-secondary); font-weight: 700; margin-right: auto; }
+.macro-head .value { font-size: 19px; font-weight: 800; }
+.macro-head .delta { font-size: 12px; font-weight: 700; }
+.macro-head .delta.up   { color: var(--delta-up); }
+.macro-head .delta.down { color: var(--delta-down); }
+.macro-head .delta.flat { color: var(--text-muted); }
+.macro-chart svg { display: block; width: 100%; height: auto; margin-top: 4px; }
+.macro-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
 
 .bond-read { font-size: 13.5px; color: var(--text-secondary); margin: 14px 0 0; }
 .bond-read .bond-tag {

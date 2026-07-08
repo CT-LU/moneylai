@@ -29,20 +29,27 @@
         <span class="status-dot" id="dot-scanner" title="商品、債券與 VIX 報價狀態"></span>商品債券
         <span id="ts-scanner" class="ts">--</span>
       </div>
+      <div class="status-line">
+        <span class="status-dot" id="dot-macro" title="核心 PCE、非農就業與失業率資料狀態"></span>總經資料
+        <span id="ts-macro" class="ts">--</span>
+      </div>
     </div>
   </header>
 
-  <!-- ===== 股債趨勢(美債殖利率曲線 + VIX)===== -->
+  <!-- ===== 聯準會拔拔(美債殖利率曲線 + VIX + 通膨與就業)===== -->
   <section class="card" id="bond-card">
     <div class="card-head">
-      <h2 class="card-title">股債趨勢</h2>
+      <h2 class="card-title">聯準會拔拔</h2>
     </div>
-    <p class="card-desc">債市看殖利率曲線:2 年(短天期,反映升降息預期)、10 年與 30 年(長天期,反映增長/通膨與資金避險),比較今天、一週前與一月前;股市看 VIX 波動率指數(恐慌溫度計)。兩者合讀,判斷資金在股債之間的避險/風險偏好切換。</p>
+    <p class="card-desc">聯準會的一舉一動看三件事:債市的殖利率曲線(2 年反映升降息預期;10 年、30 年反映增長/通膨與避險,比較今天、一週前與一月前)、股市的 VIX 恐慌溫度計,以及雙重使命——物價(核心 PCE,聯準會盯的通膨指標,目標 2%)與就業(非農新增、失業率)。</p>
     <div class="bond-layout">
       <div id="bond-chart"></div>
       <div class="bond-stats" id="bond-stats"></div>
     </div>
     <p class="bond-read" id="bond-read"></p>
+    <div class="macro-grid" id="macro-grid"></div>
+    <p class="bond-read" id="macro-read"></p>
+    <p class="card-footnote">核心 PCE 年增率(BEA,經 DBnomics)與非農/失業率(美國勞工統計局 BLS)為月資料,發布有時滯;VIX 趨勢由本頁跨日累積,啟用初期僅有少數點位。</p>
   </section>
 
   <!-- ===== 資產資金流向(近 N 週熱力圖)===== -->
@@ -108,6 +115,8 @@
     <p>資料來源:匯率 — <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter API</a>(歐洲央行,每個交易日更新一次)·
     加密貨幣與黃金(PAXG 代理)— <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每小時輪詢)·
     原油(WTI/布蘭特)/銅/綠能/AI/美債殖利率/VIX/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
+    非農就業與失業率 — <a href="https://www.bls.gov/developers/" target="_blank" rel="noopener">美國勞工統計局 BLS</a> ·
+    核心 PCE — BEA(經 <a href="https://db.nomics.world" target="_blank" rel="noopener">DBnomics</a>)·
     即時行情(含台灣加權)— TradingView widget。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>

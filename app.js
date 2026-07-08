@@ -8,6 +8,7 @@
    - CoinGecko market_chart(days=95,回日資料)→ BTC / ETH / 黃金(PAXG)
    - TradingView scanner → 原油 WTI/布蘭特、銅、綠能(ICLN)、AI(AIQ)
      即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣
+   - BLS 官方 API → 非農就業、失業率;DBnomics(BEA 鏡像)→ 核心 PCE 物價指數
    - TradingView widget → DXY / VIX / 各國股市(含台灣加權)/ 加密與 AI 即時報價
    原則:各資料源獨立抓取,單一來源失敗不影響其他區塊;
         重新抓取時保留前一次渲染(降透明度),不跳版。
@@ -69,9 +70,14 @@ const SCANNER_ALL = [
   { sym: TWD_REGION.sym, ep: 'global', name: '美元兌台幣' },
 ];
 
+// 總經月資料(聯準會雙重使命:物價 + 就業)
+const BLS_NFP = 'CES0000000001';   // 非農就業人數(千人,季調)
+const BLS_UNRATE = 'LNS14000000';  // 失業率(%,季調)
+
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
 const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
 const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
+const MACRO_POLL_MS = 6 * 60 * 60 * 1000; // 總經是月資料,6 小時輪詢綽綽有餘
 
 const DAY_MS = 86400e3;
 
@@ -81,6 +87,7 @@ const state = {
   fxRates: null,    // { date: { EUR: .., JPY: .. } },base = USD
   scanner: null,    // { sym: { close, change, perfW, perf1M } }
   cryptoHist: null, // { coinId: [{ date, value }] } 95 日日收盤
+  macro: null,      // { pce, nfp, unrate } 各為 [{ date:'YYYY-MM', value }]
 };
 
 // 介面狀態:兩張熱力圖各自的觀察週數與檢視模式
@@ -183,6 +190,57 @@ async function fetchScanner() {
   if (!Object.keys(out).length) throw new Error('scanner 無資料');
   state.scanner = out;
   recordScannerHistory();
+}
+
+// 總經月資料:非農與失業率走 BLS 官方 API(有 CORS;它擋 OPTIONS preflight,
+// 所以只能用免 preflight 的 GET,一序列一請求,不能 POST JSON);
+// 核心 PCE 走 DBnomics 的 BEA 鏡像(FRED 無 CORS、BEA 官方要 key)
+async function fetchMacro() {
+  const year = new Date().getFullYear();
+  const blsUrl = (id) =>
+    `https://api.bls.gov/publicAPI/v2/timeseries/data/${id}?startyear=${year - 2}&endyear=${year}`;
+  const [nfpRes, urRes, pceRes] = await Promise.all([
+    fetch(blsUrl(BLS_NFP)).then(r => { if (!r.ok) throw new Error(`BLS ${r.status}`); return r.json(); }),
+    fetch(blsUrl(BLS_UNRATE)).then(r => { if (!r.ok) throw new Error(`BLS ${r.status}`); return r.json(); }),
+    fetch('https://api.db.nomics.world/v22/series/BEA/NIPA-T20804/DPCCRG-M?observations=1&format=json')
+      .then(r => { if (!r.ok) throw new Error(`DBnomics ${r.status}`); return r.json(); }),
+  ]);
+
+  const bls = {};
+  for (const res of [nfpRes, urRes]) {
+    if (res.status !== 'REQUEST_SUCCEEDED') throw new Error('BLS 回應異常');
+    for (const s of res.Results?.series || []) {
+      bls[s.seriesID] = s.data
+        .filter(x => /^M(0\d|1[0-2])$/.test(x.period))   // 排除年度值 M13
+        .map(x => ({ date: `${x.year}-${x.period.slice(1)}`, value: Number(x.value) }))
+        .filter(p => Number.isFinite(p.value))
+        .sort((a, b) => a.date.localeCompare(b.date));
+    }
+  }
+
+  // 非農取「月增」(千人):就業市場動能看的是每月新增而非總量
+  const nfpLevels = bls[BLS_NFP] || [];
+  const nfp = nfpLevels.slice(1).map((p, i) => ({ date: p.date, value: p.value - nfpLevels[i].value }));
+
+  // 核心 PCE:BEA 給的是指數,轉成年增率(聯準會 2% 目標即以此衡量)
+  const doc = pceRes.series?.docs?.[0];
+  if (!doc) throw new Error('DBnomics 無資料');
+  const idx = doc.period
+    .map((d, i) => ({ date: d, value: Number(doc.value[i]) }))
+    .filter(p => Number.isFinite(p.value));
+  const byDate = new Map(idx.map(p => [p.date, p.value]));
+  const pce = idx.flatMap(p => {
+    const [y, m] = p.date.split('-');
+    const prev = byDate.get(`${Number(y) - 1}-${m}`);
+    return prev ? [{ date: p.date, value: (p.value / prev - 1) * 100 }] : [];
+  });
+
+  if (!nfp.length && !pce.length) throw new Error('總經無資料');
+  state.macro = {
+    nfp: nfp.slice(-13),
+    unrate: (bls[BLS_UNRATE] || []).slice(-13),
+    pce: pce.slice(-13),
+  };
 }
 
 // BTC / ETH / 黃金(PAXG)的 95 日歷史(>90 天 CoinGecko 直接回日資料)
@@ -734,7 +792,7 @@ function renderBondChart(data) {
   container.replaceChildren(svg.node());
 }
 
-function renderBondStats(data, vix) {
+function renderBondStats(data) {
   const wrap = $('#bond-stats');
   const boxes = [];
 
@@ -765,21 +823,6 @@ function renderBondStats(data, vix) {
     const cls = !Number.isFinite(dSpread) || Math.abs(dSpread) < 0.05 ? 'flat' : dSpread > 0 ? 'up' : 'down';
     delta.appendChild(el('span', cls, dSpread === null ? '—' : `${fmtBp(dSpread)}`));
     delta.appendChild(el('span', 'period', ' / 週(正=變陡)'));
-    box.appendChild(delta);
-    boxes.push(box);
-  }
-
-  // VIX(股市端的恐慌溫度計):>20 = 避險情緒升溫
-  if (vix) {
-    const hot = vix.now >= 20;
-    const box = el('div', `bond-stat vix${hot ? ' inverted' : ''}`);
-    box.appendChild(el('div', 'label', `VIX 恐慌指數${hot ? '(⚠ 避險情緒)' : ''}`));
-    box.appendChild(el('div', 'value', vix.now.toFixed(1)));
-    const delta = el('div', 'delta');
-    const cls = !Number.isFinite(vix.dW) || Math.abs(vix.dW) < 0.05 ? 'flat' : vix.dW > 0 ? 'up' : 'down';
-    delta.appendChild(el('span', cls, vix.dW === null ? '—'
-      : `${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點`));
-    delta.appendChild(el('span', 'period', ' / 週(升=市場轉趨緊張)'));
     box.appendChild(delta);
     boxes.push(box);
   }
@@ -849,11 +892,199 @@ function renderBondRead(data, vix) {
 
 function renderBondCard() {
   const data = bondPoints();
-  if (!data) return;
-  const vix = vixPoint();
-  renderBondChart(data);
-  renderBondStats(data, vix);
-  renderBondRead(data, vix);
+  if (data) {
+    renderBondChart(data);
+    renderBondStats(data);
+    renderBondRead(data, vixPoint());
+  }
+  renderMacroTrends();
+  renderMacroRead();
+}
+
+// ===== 迷你時間趨勢圖(VIX 與總經月資料共用)=====
+
+// series: [{ date, value }] 升冪;def: { fmt, ref, refLabel }
+function renderMiniTrend(container, def, series) {
+  const width = Math.max(200, container.clientWidth || 240);
+  const height = 92;
+  const m = { top: 8, right: 12, bottom: 16, left: 38 };
+
+  const ink = cssVar('--ink');
+  const cGrid = cssVar('--grid');
+  const cMuted = cssVar('--text-muted');
+  const surface = cssVar('--surface-1');
+  const accent = cssVar('--mem-yellow');
+
+  const pts = series.map(p => ({ ...p, t: new Date(p.date).getTime() }));
+  const x = d3.scaleTime()
+    .domain(d3.extent(pts, p => p.t))
+    .range([m.left, width - m.right]);
+
+  const vals = pts.map(p => p.value);
+  if (def.ref !== null) vals.push(def.ref);          // 參考線(2% 目標、零線)一定要在視野內
+  const span = d3.max(vals) - d3.min(vals) || 1;
+  const y = d3.scaleLinear()
+    .domain([d3.min(vals) - span * 0.15, d3.max(vals) + span * 0.15])
+    .range([height - m.bottom, m.top])
+    .nice();
+
+  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+
+  for (const t of y.ticks(3)) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(t)).attr('y2', y(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 5).attr('y', y(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .text(def.fmt(t));
+  }
+
+  // 參考線(通膨 2% 目標 / 非農零線)
+  if (def.ref !== null) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(def.ref)).attr('y2', y(def.ref))
+      .attr('stroke', cMuted).attr('stroke-width', 1.5).attr('stroke-dasharray', '5 4');
+    if (def.refLabel) {
+      svg.append('text')
+        .attr('x', width - m.right).attr('y', y(def.ref) - 4)
+        .attr('text-anchor', 'end').attr('font-size', 9.5).attr('fill', cMuted)
+        .text(def.refLabel);
+    }
+  }
+
+  // 首尾日期標示(月資料顯示 YYYY-MM,日資料顯示 MM-DD)
+  const [d0, d1] = [pts[0], pts[pts.length - 1]];
+  for (const [p, anchor] of [[d0, 'start'], [d1, 'end']]) {
+    svg.append('text')
+      .attr('x', x(p.t)).attr('y', height - 4)
+      .attr('text-anchor', anchor).attr('font-size', 9.5).attr('fill', cMuted)
+      .text(p.date.length > 7 ? p.date.slice(5) : p.date.slice(0, 7));
+  }
+
+  const line = d3.line().x(p => x(p.t)).y(p => y(p.value));
+  svg.append('path')
+    .attr('d', line(pts))
+    .attr('fill', 'none')
+    .attr('stroke', ink)
+    .attr('stroke-width', 2.5)
+    .attr('stroke-linecap', 'round')
+    .attr('stroke-linejoin', 'round');
+
+  pts.forEach((p, i) => {
+    const last = i === pts.length - 1;
+    svg.append('circle')
+      .attr('cx', x(p.t)).attr('cy', y(p.value))
+      .attr('r', last ? 4.5 : 2.6)
+      .attr('fill', last ? accent : ink)
+      .attr('stroke', last ? ink : surface)
+      .attr('stroke-width', last ? 1.8 : 1.2)
+      .on('mouseenter mousemove', (ev) => {
+        showTooltip([
+          { text: `${def.label} · ${p.date}`, cls: 'tt-label' },
+          { text: def.fmt(p.value), cls: 'tt-value' },
+        ], ev.clientX, ev.clientY);
+      })
+      .on('mouseleave', hideTooltip);
+  });
+
+  container.replaceChildren(svg.node());
+}
+
+// 四張迷你趨勢:VIX(scanner 累積)+ 核心 PCE / 非農 / 失業率(月資料)
+function macroTrendDefs() {
+  const vix = scannerSeries(VIX_SYM);
+  const defs = [];
+  if (vix.length >= 2) {
+    defs.push({
+      key: 'vix', label: 'VIX 恐慌指數', series: vix,
+      fmt: v => v.toFixed(1), deltaUnit: ' 點', ref: 20, refLabel: '20 警戒',
+      note: vix.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  if (state.macro) {
+    const { pce, nfp, unrate } = state.macro;
+    if (pce.length >= 2) defs.push({
+      key: 'pce', label: '核心 PCE 年增率', series: pce,
+      fmt: v => `${v.toFixed(1)}%`, deltaUnit: ' 百分點', digits: 2,
+      ref: 2, refLabel: '聯準會 2% 目標',
+    });
+    if (nfp.length >= 2) defs.push({
+      key: 'nfp', label: '非農新增就業(千人)', series: nfp,
+      fmt: v => `${v > 0 ? '+' : ''}${Math.round(v)}`, deltaUnit: ' 千人', digits: 0,
+      ref: 0, refLabel: '',
+    });
+    if (unrate.length >= 2) defs.push({
+      key: 'unrate', label: '失業率', series: unrate,
+      fmt: v => `${v.toFixed(1)}%`, deltaUnit: ' 百分點',
+      ref: null,
+    });
+  }
+  return defs;
+}
+
+function renderMacroTrends() {
+  const grid = $('#macro-grid');
+  const defs = macroTrendDefs();
+  if (!defs.length) { grid.replaceChildren(); return; }
+
+  const boxes = defs.map(def => {
+    const box = el('div', 'macro-box');
+    const head = el('div', 'macro-head');
+    head.appendChild(el('span', 'label', def.label));
+    const latest = def.series[def.series.length - 1];
+    const prev = def.series[def.series.length - 2];
+    head.appendChild(el('span', 'value', def.fmt(latest.value)));
+    const d = latest.value - prev.value;
+    const cls = Math.abs(d) < 0.005 ? 'flat' : d > 0 ? 'up' : 'down';
+    const digits = def.digits ?? 1;
+    head.appendChild(el('span', `delta ${cls}`,
+      `${d > 0 ? '+' : ''}${d.toFixed(digits)}${def.deltaUnit}`));
+    box.appendChild(head);
+    const chart = el('div', 'macro-chart');
+    box.appendChild(chart);
+    if (def.note) box.appendChild(el('div', 'macro-note', def.note));
+    return { box, chart, def };
+  });
+  grid.replaceChildren(...boxes.map(b => b.box));
+  // 先掛進 DOM 再畫,才能量到實際容器寬度
+  for (const b of boxes) renderMiniTrend(b.chart, b.def, b.def.series);
+}
+
+// 通膨 × 就業的聯準會處境判讀
+function renderMacroRead() {
+  const p = $('#macro-read');
+  if (!state.macro) { p.textContent = ''; return; }
+  const { pce, nfp, unrate } = state.macro;
+  const pceNow = pce[pce.length - 1];
+  const urNow = unrate[unrate.length - 1];
+  const urPrev6 = unrate[unrate.length - 7] ?? unrate[0];
+  const nfp3m = nfp.slice(-3).reduce((s, x) => s + x.value, 0) / Math.min(3, nfp.length);
+  if (!pceNow || !urNow || !Number.isFinite(nfp3m)) { p.textContent = ''; return; }
+
+  const inflHot = pceNow.value > 2.5;
+  const inflNear = pceNow.value <= 2.5 && pceNow.value > 2.1;
+  const jobsWeak = (urNow.value - urPrev6.value) >= 0.2 || nfp3m < 100;
+
+  const inflText = inflHot ? `仍明顯高於聯準會 2% 目標`
+    : inflNear ? `接近聯準會 2% 目標` : `已落在聯準會 2% 目標附近`;
+  const jobsText = jobsWeak ? `就業市場降溫(失業率走高或非農轉弱)` : `就業市場仍具韌性`;
+
+  let verdict;
+  if (inflHot && !jobsWeak) verdict = '通膨未回目標而就業尚穩,聯準會傾向把利率維持在高檔更久。';
+  else if (inflHot && jobsWeak) verdict = '通膨偏高但就業轉弱,聯準會陷入兩難,市場對政策路徑的分歧會加大波動。';
+  else if (!inflHot && jobsWeak) verdict = '通膨降溫且就業轉弱,降息的空間與壓力同時上升,利多債市。';
+  else verdict = '通膨受控且就業穩健,政策可保持耐心,市場主軸回到基本面。';
+
+  p.replaceChildren(
+    el('span', 'bond-tag', '雙重使命'),
+    document.createTextNode(
+      `通膨端:核心 PCE 年增 ${pceNow.value.toFixed(1)}%(${pceNow.date}),${inflText};` +
+      `就業端:失業率 ${urNow.value.toFixed(1)}%、近三月非農平均月增 ${Math.round(nfp3m)} 千人,${jobsText}。${verdict}`
+    ),
+  );
 }
 
 // ===== TradingView widget =====
@@ -963,6 +1194,19 @@ async function refreshScanner() {
   }
 }
 
+async function refreshMacro() {
+  try {
+    await fetchMacro();
+    setStatus('dot-macro', 'ts-macro', true);
+  } catch (e) {
+    console.error('總經更新失敗:', e);
+    setStatus('dot-macro', 'ts-macro', false);
+  } finally {
+    renderMacroTrends();
+    renderMacroRead();
+  }
+}
+
 let historyRetryTimer = null;
 
 async function refreshCryptoHistory() {
@@ -987,7 +1231,7 @@ async function refreshCryptoHistory() {
 async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
-  await Promise.allSettled([refreshFX(), refreshScanner()]);
+  await Promise.allSettled([refreshFX(), refreshScanner(), refreshMacro()]);
   await refreshCryptoHistory();
   btn.disabled = false;
 }
@@ -1051,6 +1295,7 @@ function main() {
   setInterval(refreshFX, FX_POLL_MS);
   setInterval(refreshScanner, SCANNER_POLL_MS);
   setInterval(refreshCryptoHistory, HISTORY_POLL_MS);
+  setInterval(refreshMacro, MACRO_POLL_MS);
 }
 
 main();
