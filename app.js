@@ -2330,6 +2330,7 @@ function renderChinaCard() {
   const { margin, south, etf } = state.china;
   if (!margin?.length && !south?.length && !etf) return;   // 全缺:保留前一次渲染
   renderChinaStats();
+  $('#china-etf-block').hidden = !etf;   // 分時抓不到時整塊收起,不留孤立小標
   if (etf) {
     renderChinaEtf();
     renderChinaEtfLegend();
