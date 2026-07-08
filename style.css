@@ -38,6 +38,12 @@
   --bond-week:  #7c4dff;
   --bond-month: #0f9b9b;
 
+  /* 台幣匯率卡四條線(固定順序:美元→日圓→歐元→人民幣,已過 CVD/對比驗證) */
+  --twd-usd: #7c4dff;
+  --twd-jpy: #0f9b9b;
+  --twd-eur: #c25a00;
+  --twd-cny: #d6246e;
+
   /* 狀態 */
   --status-good: #109148;
   --status-bad:  #e8384f;
@@ -68,6 +74,11 @@
     --bond-today: #f4eee1;
     --bond-week:  #9377f0;
     --bond-month: #1ba8a8;
+
+    --twd-usd: #9377f0;
+    --twd-jpy: #1ba8a8;
+    --twd-eur: #d97728;
+    --twd-cny: #e85586;
 
     --status-good: #27995a;
     --status-bad:  #e04a59;
@@ -190,6 +201,7 @@ section { margin-bottom: 34px; }
   padding: 4px 14px;
   transform: rotate(-0.8deg);
 }
+#twd-card    { --card-accent: var(--mem-cyan); }
 #asset-card  { --card-accent: var(--mem-yellow); }
 #region-card { --card-accent: #3fd1d1; }
 #bond-card   { --card-accent: var(--mem-pink); }
@@ -318,6 +330,30 @@ section { margin-bottom: 34px; }
 .macro-head .delta.flat { color: var(--text-muted); }
 .macro-chart svg { display: block; width: 100%; height: auto; margin-top: 4px; }
 .macro-note { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+
+/* 台幣匯率卡:指數化折線圖 + 圖例 */
+.twd-chart { margin-top: 14px; }
+.twd-chart svg { display: block; width: 100%; height: auto; }
+.twd-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.twd-chip { display: inline-flex; align-items: center; gap: 6px; }
+.twd-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  flex: none;
+}
+.twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
+.twd-box .twd-swatch { width: 10px; height: 10px; }
 
 .bond-read { font-size: 13.5px; color: var(--text-secondary); margin: 14px 0 0; }
 .bond-read .bond-tag {

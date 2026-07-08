@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>全球資金流向儀表板</title>
+<title>錢錢流向儀表板</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,7 +12,7 @@
   <!-- ===== 頁首:標題 + 更新狀態 ===== -->
   <header class="page-header">
     <div>
-      <h1>全球資金流向儀表板</h1>
+      <h1>錢錢流向儀表板</h1>
       <p class="subtitle">追蹤熱錢的去向:美元、日圓套利、加密貨幣、黃金、原油與 AI 板塊</p>
     </div>
     <div class="update-status">
@@ -35,6 +35,27 @@
       </div>
     </div>
   </header>
+
+  <!-- ===== 新台幣匯率(對美元/日圓/歐元/人民幣,指數化折線)===== -->
+  <section class="card" id="twd-card">
+    <div class="card-head">
+      <h2 class="card-title">新台幣匯率</h2>
+      <div class="card-controls">
+        <span class="seg-label">觀察期間</span>
+        <div class="seg-toggle" id="twd-weeks" role="tablist">
+          <button type="button" data-weeks="4">4 週</button>
+          <button type="button" data-weeks="8">8 週</button>
+          <button type="button" data-weeks="12" class="active">12 週</button>
+        </div>
+      </div>
+    </div>
+    <p class="card-desc">換 1 單位外幣要花多少台幣。四種匯率量級差很大(1 美元 ≈ 32 台幣、1 日圓 ≈ 0.2 台幣),折線圖以「期初 = 100」指數化後放在同一張圖:線往上=要花更多台幣=台幣走貶(資金流出台灣傾向)、往下=台幣走升。</p>
+    <div class="macro-grid" id="twd-stats"></div>
+    <div id="twd-chart" class="twd-chart"></div>
+    <div class="twd-legend" id="twd-legend"></div>
+    <p class="bond-read" id="twd-read"></p>
+    <p class="card-footnote">匯率來自 currency-api(每日更新一次);歷史走勢以每週一點取樣,最新一點為當日匯率。</p>
+  </section>
 
   <!-- ===== 聯準會拔拔(美債殖利率曲線 + VIX + 通膨與就業)===== -->
   <section class="card" id="bond-card">
@@ -117,6 +138,7 @@
     原油(WTI/布蘭特)/銅/綠能/AI/美債殖利率/VIX/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
     非農就業與失業率 — <a href="https://www.bls.gov/developers/" target="_blank" rel="noopener">美國勞工統計局 BLS</a> ·
     核心 PCE — BEA(經 <a href="https://db.nomics.world" target="_blank" rel="noopener">DBnomics</a>)·
+    新台幣匯率 — <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">currency-api</a>(每日更新)·
     即時行情(含台灣加權)— TradingView widget。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>

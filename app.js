@@ -9,6 +9,8 @@
    - TradingView scanner → 原油 WTI/布蘭特、銅、綠能(ICLN)、AI(AIQ)
      即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣
    - BLS 官方 API → 非農就業、失業率;DBnomics(BEA 鏡像)→ 核心 PCE 物價指數
+   - fawazahmed0 currency-api(jsDelivr / pages.dev 備援)→ 新台幣對美元、
+     日圓、歐元、人民幣的歷史匯率(ECB 沒有 TWD)
    - TradingView widget → DXY / VIX / 各國股市(含台灣加權)/ 加密與 AI 即時報價
    原則:各資料源獨立抓取,單一來源失敗不影響其他區塊;
         重新抓取時保留前一次渲染(降透明度),不跳版。
@@ -74,6 +76,16 @@ const SCANNER_ALL = [
 const BLS_NFP = 'CES0000000001';   // 非農就業人數(千人,季調)
 const BLS_UNRATE = 'LNS14000000';  // 失業率(%,季調)
 
+// 新台幣對主要貨幣(currency-api,日更;歷史每週取樣一點)
+// 固定順序與線色(cssVar 淺深兩組皆通過 dataviz 色彩驗證),不因缺線重排
+const TWDFX_CURRENCIES = [
+  { code: 'usd', name: '美元',   digits: 3, color: '--twd-usd' },
+  { code: 'jpy', name: '日圓',   digits: 4, color: '--twd-jpy' },
+  { code: 'eur', name: '歐元',   digits: 3, color: '--twd-eur' },
+  { code: 'cny', name: '人民幣', digits: 3, color: '--twd-cny' },
+];
+const TWDFX_KEY = 'moneylai-twdfx-history';
+
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
 const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
 const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
@@ -88,12 +100,14 @@ const state = {
   scanner: null,    // { sym: { close, change, perfW, perf1M } }
   cryptoHist: null, // { coinId: [{ date, value }] } 95 日日收盤
   macro: null,      // { pce, nfp, unrate } 各為 [{ date:'YYYY-MM', value }]
+  twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
 };
 
-// 介面狀態:兩張熱力圖各自的觀察週數與檢視模式
+// 介面狀態:兩張熱力圖各自的觀察週數與檢視模式;台幣匯率卡的觀察週數
 const ui = {
   assetWeeks: 4,  assetView: 'chart',
   regionWeeks: 4, regionView: 'chart',
+  twdWeeks: 12,
 };
 
 // ===== 小工具 =====
@@ -163,6 +177,72 @@ async function fetchFX() {
   const data = await res.json();
   state.fxRates = data.rates;
   state.fxDates = Object.keys(data.rates).sort();
+}
+
+// ===== 新台幣匯率(currency-api)=====
+// Frankfurter(ECB)沒有 TWD,台幣歷史匯率走 fawazahmed0 currency-api:
+// jsDelivr 為主、pages.dev 備援;@{YYYY-MM-DD} 可查任意歷史日、@latest 為當日
+
+async function fetchTwdFxDate(tag) {
+  const path = 'v1/currencies/usd.min.json';
+  const urls = [
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${tag}/${path}`,
+    `https://${tag}.currency-api.pages.dev/${path}`,
+  ];
+  let lastErr;
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`currency-api ${res.status}`);
+      return await res.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+// 由 USD 基準交叉推算「1 單位外幣兌多少台幣」
+function twdRatesFrom(data) {
+  const u = data && data.usd;
+  if (!u || !u.twd) return null;
+  const out = {};
+  for (const { code } of TWDFX_CURRENCIES) {
+    if (!u[code]) return null;
+    out[code] = code === 'usd' ? u.twd : u.twd / u[code];
+  }
+  return out;
+}
+
+function loadTwdHist() {
+  try { return JSON.parse(localStorage.getItem(TWDFX_KEY)) || {}; }
+  catch { return {}; }
+}
+
+async function fetchTwdFx() {
+  const hist = loadTwdHist();
+
+  // 最新一筆一定重抓(latest 每日更新)
+  const latest = await fetchTwdFxDate('latest');
+  const latestRates = twdRatesFrom(latest);
+  if (!latestRates) throw new Error('currency-api 缺台幣匯率');
+  hist[latest.date] = latestRates;
+
+  // 由最新日期往回每 7 天一個錨點(供最長 12 週折線);
+  // 歷史匯率不會變,快取命中就不再請求 —— 首次載入約 13 個請求,之後每小時只抓 latest
+  const baseMs = new Date(latest.date).getTime();
+  const anchors = [];
+  for (let w = 1; w <= 12; w++) anchors.push(isoDate(new Date(baseMs - w * 7 * DAY_MS)));
+  await Promise.allSettled(anchors.filter(d => !hist[d]).map(async (d) => {
+    const rates = twdRatesFrom(await fetchTwdFxDate(d));
+    if (rates) hist[d] = rates;   // 單日失敗只缺一點,不影響整體
+  }));
+
+  // 修剪:超過 100 天的日期刪除,不無限累積
+  const cutoff = isoDate(new Date(baseMs - 100 * DAY_MS));
+  for (const d of Object.keys(hist)) if (d < cutoff) delete hist[d];
+  try { localStorage.setItem(TWDFX_KEY, JSON.stringify(hist)); }
+  catch { /* 隱私模式寫入失敗:僅影響下次載入速度 */ }
+
+  state.twdfx = Object.keys(hist).sort().map(d => ({ date: d, ...hist[d] }));
 }
 
 // TradingView scanner:一次 POST 拿多檔報價
@@ -1092,6 +1172,219 @@ function renderMacroRead() {
   );
 }
 
+// ===== 新台幣匯率卡 =====
+
+function fmtTwdRate(v, digits) {
+  return Number.isFinite(v) ? v.toFixed(digits) : '—';
+}
+
+// 卡頭四個數字盒:1 單位外幣 = 多少台幣 + 一週變化(匯率升 = 台幣貶)
+function renderTwdStats(series) {
+  const grid = $('#twd-stats');
+  const latest = series[series.length - 1];
+  const latestMs = new Date(latest.date).getTime();
+  const boxes = TWDFX_CURRENCIES.map((c) => {
+    const box = el('div', 'macro-box twd-box');
+    const head = el('div', 'macro-head');
+    const label = el('span', 'label');
+    label.appendChild(el('span', 'twd-swatch'));
+    label.lastChild.style.background = cssVar(c.color);
+    label.appendChild(document.createTextNode(`1 ${c.name}`));
+    head.appendChild(label);
+    head.appendChild(el('span', 'value', `${fmtTwdRate(latest[c.code], c.digits)} 台幣`));
+
+    // 一週變化:匯率漲 = 要花更多台幣 = 台幣走貶
+    const one = toSeries(series.map(p => p.date), series.map(p => p[c.code]));
+    const wk = valueNear(one.slice(0, -1), latestMs - 7 * DAY_MS);
+    if (wk) {
+      const pct = pctChange(wk.value, latest[c.code]);
+      const cls = Math.abs(pct) < 0.05 ? 'flat' : pct > 0 ? 'up' : 'down';
+      const word = Math.abs(pct) < 0.05 ? '台幣持平' : pct > 0 ? '台幣貶' : '台幣升';
+      head.appendChild(el('span', `delta ${cls}`, `${fmtPct(pct)} /週(${word})`));
+    }
+    box.appendChild(head);
+    return box;
+  });
+  grid.replaceChildren(...boxes);
+}
+
+// 指數化多線圖:期初 = 100,線往上 = 要花更多台幣換 1 單位外幣 = 台幣走貶
+function renderTwdChart(win) {
+  const container = $('#twd-chart');
+  const width = Math.max(320, container.clientWidth || 640);
+  const height = 260;
+  const m = { top: 16, right: 86, bottom: 26, left: 44 };
+
+  const ink = cssVar('--ink');
+  const cGrid = cssVar('--grid');
+  const cMuted = cssVar('--text-muted');
+  const cText = cssVar('--text-primary');
+  const surface = cssVar('--surface-1');
+
+  // 指數化:每條線以視窗第一點為 100
+  const lines = TWDFX_CURRENCIES.map((c) => ({
+    ...c,
+    hex: cssVar(c.color),
+    pts: win.map(p => ({
+      date: p.date,
+      t: new Date(p.date).getTime(),
+      rate: p[c.code],
+      idx: p[c.code] / win[0][c.code] * 100,
+    })),
+  }));
+
+  const x = d3.scaleTime()
+    .domain(d3.extent(win, p => new Date(p.date).getTime()))
+    .range([m.left, width - m.right]);
+  const allIdx = lines.flatMap(l => l.pts.map(p => p.idx)).concat([100]);
+  const span = d3.max(allIdx) - d3.min(allIdx) || 1;
+  const y = d3.scaleLinear()
+    .domain([d3.min(allIdx) - span * 0.12, d3.max(allIdx) + span * 0.12])
+    .range([height - m.bottom, m.top])
+    .nice();
+
+  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+
+  for (const t of y.ticks(4)) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(t)).attr('y2', y(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 6).attr('y', y(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10.5).attr('fill', cMuted)
+      .text(t.toFixed(1));
+  }
+  for (const t of x.ticks(5)) {
+    svg.append('text')
+      .attr('x', x(t)).attr('y', height - 8)
+      .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('fill', cMuted)
+      .text(d3.timeFormat('%m-%d')(t));
+  }
+
+  // 期初 = 100 參考線
+  svg.append('line')
+    .attr('x1', m.left).attr('x2', width - m.right)
+    .attr('y1', y(100)).attr('y2', y(100))
+    .attr('stroke', cMuted).attr('stroke-width', 1.5).attr('stroke-dasharray', '5 4');
+  svg.append('text')
+    .attr('x', m.left + 2).attr('y', y(100) - 5)
+    .attr('font-size', 9.5).attr('fill', cMuted)
+    .text('期初 = 100');
+
+  const lineGen = d3.line().x(p => x(p.t)).y(p => y(p.idx));
+  for (const l of lines) {
+    svg.append('path')
+      .attr('d', lineGen(l.pts))
+      .attr('fill', 'none')
+      .attr('stroke', l.hex)
+      .attr('stroke-width', 2.5)
+      .attr('stroke-linecap', 'round')
+      .attr('stroke-linejoin', 'round');
+    for (const p of l.pts) {
+      svg.append('circle')
+        .attr('cx', x(p.t)).attr('cy', y(p.idx)).attr('r', 2.6)
+        .attr('fill', l.hex).attr('stroke', surface).attr('stroke-width', 1.2);
+    }
+  }
+
+  // 線尾直接標籤(色點 + 墨色文字);縱向錯開避免重疊
+  const ends = lines.map((l) => {
+    const last = l.pts[l.pts.length - 1];
+    return { l, ty: y(last.idx), cy: y(last.idx) };
+  }).sort((a, b) => a.ty - b.ty);
+  for (let i = 1; i < ends.length; i++) {
+    if (ends[i].ty - ends[i - 1].ty < 14) ends[i].ty = ends[i - 1].ty + 14;
+  }
+  for (const e of ends) {
+    svg.append('circle')
+      .attr('cx', width - m.right + 10).attr('cy', e.ty)
+      .attr('r', 4).attr('fill', e.l.hex).attr('stroke', ink).attr('stroke-width', 1.5);
+    svg.append('text')
+      .attr('x', width - m.right + 18).attr('y', e.ty + 3.5)
+      .attr('font-size', 11).attr('font-weight', 700).attr('fill', cText)
+      .text(e.l.name);
+  }
+
+  // hover 十字線:顯示該日四幣實際匯率與指數變化
+  const hover = svg.append('g').style('display', 'none');
+  hover.append('line')
+    .attr('y1', m.top).attr('y2', height - m.bottom)
+    .attr('stroke', cMuted).attr('stroke-width', 1).attr('stroke-dasharray', '3 3');
+  svg.append('rect')
+    .attr('x', m.left).attr('y', m.top)
+    .attr('width', width - m.left - m.right).attr('height', height - m.top - m.bottom)
+    .attr('fill', 'transparent')
+    .on('mousemove', (ev) => {
+      const [mx] = d3.pointer(ev);
+      const tMs = x.invert(mx).getTime();
+      let bi = 0, bd = Infinity;
+      win.forEach((p, i) => {
+        const d = Math.abs(new Date(p.date).getTime() - tMs);
+        if (d < bd) { bd = d; bi = i; }
+      });
+      const px = x(new Date(win[bi].date).getTime());
+      hover.style('display', null).select('line').attr('x1', px).attr('x2', px);
+      showTooltip([
+        { text: win[bi].date, cls: 'tt-label' },
+        ...lines.map(l => ({
+          text: `${l.name} ${fmtTwdRate(l.pts[bi].rate, l.digits)} 台幣(${fmtPct(l.pts[bi].idx - 100)})`,
+          cls: 'tt-value',
+        })),
+      ], ev.clientX, ev.clientY);
+    })
+    .on('mouseleave', () => { hover.style('display', 'none'); hideTooltip(); });
+
+  container.replaceChildren(svg.node());
+}
+
+function renderTwdLegend() {
+  const box = $('#twd-legend');
+  box.replaceChildren(...TWDFX_CURRENCIES.map((c) => {
+    const chip = el('span', 'twd-chip');
+    const sw = el('span', 'twd-swatch');
+    sw.style.background = cssVar(c.color);
+    chip.appendChild(sw);
+    chip.appendChild(document.createTextNode(c.name));
+    return chip;
+  }));
+}
+
+// 視窗首尾的台幣升貶判讀(對齊區域卡語彙:台幣貶 = 資金流出傾向)
+function renderTwdRead(win, nWeeks) {
+  const p = $('#twd-read');
+  const first = win[0], last = win[win.length - 1];
+  const moves = TWDFX_CURRENCIES.map((c) => ({
+    name: c.name,
+    pct: pctChange(first[c.code], last[c.code]),   // 匯率漲 = 台幣貶
+  }));
+  const parts = moves.map(mv =>
+    `對${mv.name}${Math.abs(mv.pct) < 0.1 ? '持平' : mv.pct > 0 ? '貶值' : '升值'} ${Math.abs(mv.pct).toFixed(1)}%`);
+  const nDep = moves.filter(mv => mv.pct > 0.1).length;
+  const nApp = moves.filter(mv => mv.pct < -0.1).length;
+  const verdict = nDep >= 3 ? '台幣全面走貶,熱錢流出台灣的傾向明顯。'
+    : nApp >= 3 ? '台幣全面走升,資金流入台灣的傾向明顯。'
+    : '台幣漲跌互見,主要反映各貨幣自身強弱,資金進出台灣的訊號不明顯。';
+  p.replaceChildren(
+    el('span', 'bond-tag', `近 ${nWeeks} 週`),
+    document.createTextNode(`台幣${parts.join('、')}。${verdict}`),
+  );
+}
+
+function renderTwdCard() {
+  const series = state.twdfx;
+  if (!series || series.length < 2) return;   // 資料未到:保留前一次渲染
+  const nWeeks = ui.twdWeeks;
+  const latestMs = new Date(series[series.length - 1].date).getTime();
+  const startMs = latestMs - nWeeks * 7 * DAY_MS - DAY_MS / 2;
+  const win = series.filter(p => new Date(p.date).getTime() >= startMs);
+  if (win.length < 2) return;
+  renderTwdStats(series);
+  renderTwdChart(win);
+  renderTwdLegend();
+  renderTwdRead(win, nWeeks);
+}
+
 // ===== TradingView widget =====
 
 function mountTradingView() {
@@ -1167,24 +1460,24 @@ function mountTradingView() {
 // ===== 更新流程 =====
 
 function renderAll() {
+  renderTwdCard();
   renderAssetCard();
   renderRegionCard();
   renderBondCard();
 }
 
+// 匯率兩來源一起抓(Frankfurter + 台幣 currency-api,皆為日更、每小時輪詢);
+// 任一失敗匯率燈轉紅,畫面各自保留上次成功的渲染
 async function refreshFX() {
   const card = $('#region-card');
   card.classList.add('refreshing');
-  try {
-    await fetchFX();
-    setStatus('dot-fx', 'ts-fx', true);
-  } catch (e) {
-    console.error('FX 更新失敗:', e);
-    setStatus('dot-fx', 'ts-fx', false);
-  } finally {
-    card.classList.remove('refreshing');
-    renderAll();
-  }
+  const results = await Promise.allSettled([fetchFX(), fetchTwdFx()]);
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') console.error(`${['FX', '台幣匯率'][i]} 更新失敗:`, r.reason);
+  });
+  setStatus('dot-fx', 'ts-fx', results.every(r => r.status === 'fulfilled'));
+  card.classList.remove('refreshing');
+  renderAll();
 }
 
 async function refreshScanner() {
@@ -1276,6 +1569,7 @@ function main() {
 
   $('#refresh-btn').addEventListener('click', refreshAll);
 
+  initWeekToggle('#twd-weeks', 'twdWeeks', renderTwdCard);
   initWeekToggle('#asset-weeks', 'assetWeeks', renderAssetCard);
   initWeekToggle('#region-weeks', 'regionWeeks', renderRegionCard);
   initViewToggle('#btn-asset-chart', '#btn-asset-table', 'assetView',
