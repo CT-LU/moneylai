@@ -133,13 +133,15 @@
         </div>
         <div class="seg-toggle" role="tablist">
           <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">熱力圖</button>
+          <button type="button" id="btn-asset-bump" aria-pressed="false">輪動</button>
           <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
         </div>
       </div>
     </div>
-    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出)。顏色預設為波動標準化(σ):該週漲跌除以各資產自身的週波動度——比特幣週漲 3% 是日常、美元指數漲 3% 是大事,深淺代表「這個動作對該資產有多不尋常」,跨資產才可比,|σ| 超過 2 就值得注意;切到「漲跌 %」可改看原始幅度。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。本週格右上角的小圓點=今日放量(成交量 ≥ 近 10 日均量的 1.5 倍)——價格動作有量在背書,不是縮量虛動,確切量比滑到格子上可見(外匯與現貨金屬沒有集中成交量,無此標記)。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。</p>
+    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出)。顏色預設為波動標準化(σ):該週漲跌除以各資產自身的週波動度——比特幣週漲 3% 是日常、美元指數漲 3% 是大事,深淺代表「這個動作對該資產有多不尋常」,跨資產才可比,|σ| 超過 2 就值得注意;切到「漲跌 %」可改看原始幅度。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。本週格右上角的小圓點=今日放量(成交量 ≥ 近 10 日均量的 1.5 倍)——價格動作有量在背書,不是縮量虛動,確切量比滑到格子上可見(外匯與現貨金屬沒有集中成交量,無此標記)。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。切到「輪動」改看每週名次的連線——線的交叉就是資金在資產間搬家:往上竄=錢湧向它、往下沉=錢離開它,滑到線上可聚焦單一資產。</p>
     <p class="card-summary" id="asset-summary"></p>
     <div id="asset-heatmap" class="heatmap-wrap"></div>
+    <div id="asset-bump" class="heatmap-wrap" hidden></div>
     <div class="hm-legend" id="asset-legend"></div>
     <div id="asset-table" class="region-table" hidden></div>
     <p class="card-footnote">原油(WTI/布蘭特)、銅、綠能(ICLN)、AI(AIQ)、各股指(美股/日股/歐股/中國股/香港)與債市(TLT)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本站每日快照(每個交易日自動記錄一次)與瀏覽器跨日累積合併補齊——換裝置或清瀏覽器也不會歸零,啟用初期仍會顯示白底斜線格(資料累積中)。債市列用 TLT(20 年期以上美債 ETF):漲=資金流入債市避險、跌=流出。</p>
@@ -162,13 +164,15 @@
         </div>
         <div class="seg-toggle" role="tablist">
           <button type="button" id="btn-region-chart" class="active" aria-pressed="true">熱力圖</button>
+          <button type="button" id="btn-region-bump" aria-pressed="false">輪動</button>
           <button type="button" id="btn-region-table" aria-pressed="false">表格</button>
         </div>
       </div>
     </div>
-    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。顏色預設以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常;切到「升貶 %」可改看原始幅度。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。</p>
+    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。顏色預設以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常;切到「升貶 %」可改看原始幅度。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。切到「輪動」改看每週名次的連線,線的交叉=資金在區域間搬家,滑到線上可聚焦單一貨幣。</p>
     <p class="card-summary" id="region-summary"></p>
     <div id="region-heatmap" class="heatmap-wrap"></div>
+    <div id="region-bump" class="heatmap-wrap" hidden></div>
     <div class="hm-legend" id="region-legend"></div>
     <div id="region-table" class="region-table" hidden></div>
     <p class="card-footnote">台灣(美元兌台幣)的報價來自 TradingView(歐洲央行不提供台幣匯率),更早的逐週資料由本站每日快照與瀏覽器跨日累積合併補齊,啟用初期會顯示白底斜線格。</p>
