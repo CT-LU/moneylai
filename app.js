@@ -154,12 +154,13 @@ const state = {
   },
 };
 
-// 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序週(sortAgo=k 週前,0=本週)
-// 與色階(pct=原始漲跌 %、z=除以自身週波動度的標準化;預設 z);台幣匯率卡的觀察週數
+// 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序欄(sortAgo=k 欄前,0=最新)
+// 與色階(pct=原始漲跌 %、z=除以自身波動度的標準化;預設 z);台幣匯率卡的觀察週數
+// 觀察週數 1 = 逐日模式(欄=近 7 天的每日漲跌);預設一律 1 週(使用者指定)
 const ui = {
-  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,  assetScale: 'z',
-  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0, regionScale: 'z',
-  twdWeeks: 12,
+  assetWeeks: 1,  assetView: 'chart',  assetSortAgo: 0,  assetScale: 'z',
+  regionWeeks: 1, regionView: 'chart', regionSortAgo: 0, regionScale: 'z',
+  twdWeeks: 1,
 };
 
 // ===== 小工具 =====
@@ -718,12 +719,40 @@ function weeklyChanges(series, nWeeks) {
   return cells;
 }
 
-// 資金動向的文字判讀(最近兩週):讓「錢往哪跑、停在哪」一眼可讀
-function flowVerdict(thisW, prevW) {
+// series → 近 nDays 天的逐日漲跌 %(觀察期間選 1 週時,欄=日)
+// 每格 = 當日值對「前一個有值日」的漲跌;前一有值日往回最多找 5 天
+//(涵蓋週末與單日假期,但擋掉 7 天前反推錨點——那是週資料,不能當日漲跌賣)
+// 缺當日資料(休市、快照尚未累積)為 null,由熱力圖顯示斜線格
+function dailyChanges(series, nDays) {
+  const byDate = new Map((series || []).map(p => [p.date, p.value]));
+  const now = Date.now();
+  const cells = [];
+  for (let k = nDays - 1; k >= 0; k--) {
+    const dayMs = now - k * DAY_MS;
+    const to = isoDate(new Date(dayMs));
+    const v1 = byDate.get(to);
+    let from = null, v0 = null;
+    for (let b = 1; b <= 5; b++) {
+      const d = isoDate(new Date(dayMs - b * DAY_MS));
+      if (byDate.has(d)) { from = d; v0 = byDate.get(d); break; }
+    }
+    const ok = Number.isFinite(v0) && Number.isFinite(v1);
+    cells.push({
+      pct: ok ? pctChange(v0, v1) : null,
+      from: from ?? isoDate(new Date(dayMs - DAY_MS)),
+      to,
+    });
+  }
+  return cells;
+}
+
+// 資金動向的文字判讀(最近兩欄):讓「錢往哪跑、停在哪」一眼可讀
+// unit = 最新一欄的稱呼(週模式「本週」、逐日模式「今日」)
+function flowVerdict(thisW, prevW, unit = '本週') {
   if (thisW === null) return '—';
   if (prevW === null) {
     if (Math.abs(thisW) <= 0.3) return '持平';
-    return thisW > 0 ? '本週流入' : '本週流出';
+    return thisW > 0 ? `${unit}流入` : `${unit}流出`;
   }
   const nowIn = thisW > 0.3, nowOut = thisW < -0.3;
   const wasIn = prevW > 0.3, wasOut = prevW < -0.3;
@@ -731,8 +760,8 @@ function flowVerdict(thisW, prevW) {
   if (nowOut && wasIn) return '由流入轉流出';
   if (nowIn && wasIn) return thisW > prevW ? '流入加速' : '流入放緩';
   if (nowOut && wasOut) return thisW < prevW ? '流出加速' : '流出趨緩';
-  if (nowIn) return '本週流入';
-  if (nowOut) return '本週流出';
+  if (nowIn) return `${unit}流入`;
+  if (nowOut) return `${unit}流出`;
   return '持平';
 }
 
@@ -746,6 +775,28 @@ function weeklySigma12(series) {
   return Math.sqrt(pcts.reduce((s, v) => s + v * v, 0) / pcts.length) || null;
 }
 
+// 日漲跌波動度(σ):以序列裡所有相鄰 ≤5 天的日漲跌估計(對 0 均方根);
+// 反推錨點(相鄰間隔 ≥7 天)自然被排除,不會混入週幅度
+function dailySigma(series) {
+  const pcts = [];
+  for (let i = 1; i < (series?.length ?? 0); i++) {
+    const gap = (new Date(series[i].date) - new Date(series[i - 1].date)) / DAY_MS;
+    const v = pctChange(series[i - 1].value, series[i].value);
+    if (gap <= 5 && Number.isFinite(v)) pcts.push(v);
+  }
+  if (pcts.length < 3) return null;
+  return Math.sqrt(pcts.reduce((s, v) => s + v * v, 0) / pcts.length) || null;
+}
+
+// scanner 的官方今日漲跌(change):逐日模式「今天」格的即時補值——
+// scanner 標的的逐日歷史要靠快照跨日累積,初期算不出「今天 vs 昨天」,
+// 但 change 本來就是今日漲跌,直接可用。invert = 序列取了倒數(台幣列 = 1/USDTWD)
+function scannerTodayPct(sym, invert = false) {
+  const c = state.scanner?.[sym]?.change;
+  if (!Number.isFinite(c)) return null;
+  return invert ? (1 / (1 + c / 100) - 1) * 100 : c;
+}
+
 // 每格掛上標準化值 z = 該週漲跌 ÷ 自身 σ:「這個動作對該資產有多不尋常」,跨資產可比
 function attachZ(rows) {
   const sigmas = rows.map(r => r.sigma).filter(Number.isFinite).sort((a, b) => a - b);
@@ -756,13 +807,22 @@ function attachZ(rows) {
   }
 }
 
-// 資產列:name、src(資料源)、cells(每週漲跌)、relVol(今日量比,無量能資料為 null)
+// 資產列:name、src(資料源)、cells(每欄漲跌)、relVol(今日量比,無量能資料為 null)
 // relVol 欄位只有資產列有(區域卡是外匯,沒有集中成交量,整個欄位不存在)
-function assetRows(nWeeks) {
+// daily = 逐日模式(觀察期間 1 週):cells=近 nCols 天的日漲跌、σ 用日波動度,
+// scanner 列的「今天」格算不出時用官方今日漲跌(change)補
+function assetRows(nCols, daily = false) {
   const rows = [];
-  const add = (name, series, src, relVol = null) => {
+  const cut = (series) => daily ? dailyChanges(series, nCols) : weeklyChanges(series, nCols);
+  const sig = (series) => daily ? dailySigma(series) : weeklySigma12(series);
+  const add = (name, series, src, relVol = null, todaySym = null) => {
     if (!series || series.length < 2) return;
-    rows.push({ name, src, relVol, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
+    const cells = cut(series);
+    if (daily && todaySym) {
+      const last = cells[cells.length - 1];
+      if (last.pct === null) last.pct = scannerTodayPct(todaySym);
+    }
+    rows.push({ name, src, relVol, cells, sigma: sig(series) });
   };
 
   if (state.fxRates) {
@@ -779,7 +839,7 @@ function assetRows(nWeeks) {
   if (state.scanner) {
     for (const a of SCANNER_FLOWS) {
       const rv = state.scanner[a.sym]?.relVol;
-      add(a.name, scannerSeries(a.sym), 'TradingView', Number.isFinite(rv) ? rv : null);
+      add(a.name, scannerSeries(a.sym), 'TradingView', Number.isFinite(rv) ? rv : null, a.sym);
     }
   }
 
@@ -788,20 +848,28 @@ function assetRows(nWeeks) {
   return rows;
 }
 
-// 區域列:貨幣兌美元的每週升貶值(1/匯率 → 升 = 該貨幣升值 = 流入傾向)
-function regionRows(nWeeks) {
+// 區域列:貨幣兌美元的每欄升貶值(1/匯率 → 升 = 該貨幣升值 = 流入傾向)
+function regionRows(nCols, daily = false) {
   const rows = [];
+  const cut = (series) => daily ? dailyChanges(series, nCols) : weeklyChanges(series, nCols);
+  const sig = (series) => daily ? dailySigma(series) : weeklySigma12(series);
   if (state.fxRates) {
     for (const r of REGIONS) {
       const series = toSeries(state.fxDates, fxSeries(r.code).map(v => 1 / v));
-      rows.push({ name: r.name, src: r.pair, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
+      rows.push({ name: r.name, src: r.pair, cells: cut(series), sigma: sig(series) });
     }
   }
   // 台灣:ECB 沒有 TWD,改用 scanner 的美元兌台幣(取倒數 = 台幣價值)
   const twdSeries = scannerSeries(TWD_REGION.sym)
     .map(p => ({ date: p.date, value: 1 / p.value }));
   if (twdSeries.length >= 2) {
-    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells: weeklyChanges(twdSeries, nWeeks), sigma: weeklySigma12(twdSeries) });
+    const cells = cut(twdSeries);
+    if (daily) {
+      const last = cells[cells.length - 1];
+      // 序列取了倒數,今日漲跌方向要跟著反轉
+      if (last.pct === null) last.pct = scannerTodayPct(TWD_REGION.sym, true);
+    }
+    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells, sigma: sig(twdSeries) });
   }
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
   attachZ(rows);
@@ -818,17 +886,22 @@ function sortRowsByWeek(rows, nWeeks, ago, useZ) {
 
 // ===== 熱力圖(D3)=====
 
-function weekLabel(idx, nWeeks) {
-  return idx === nWeeks - 1 ? '本週' : `-${nWeeks - 1 - idx}週`;
+// 欄標:週模式=本週/-N週;逐日模式=今天/M/D(dateIso 取該欄的日期)
+function colLabel(idx, nCols, daily, dateIso) {
+  if (!daily) return idx === nCols - 1 ? '本週' : `-${nCols - 1 - idx}週`;
+  if (idx === nCols - 1) return '今天';
+  const [, m, d] = (dateIso || '').split('-');
+  return m ? `${Number(m)}/${Number(d)}` : `-${nCols - 1 - idx}日`;
 }
 
 const REL_VOL_HIGH = 1.5;   // 今日量比 ≥1.5 = 放量(價格動作有量在背書)
 
-function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo, useZ) {
+function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo, useZ, daily = false) {
   const container = $(containerSel);
   if (!rows.length) { container.replaceChildren(); return; }
   const cellVal = (c) => (useZ ? c.z : c.pct) ?? null;   // 色階取值:原始 % 或標準化 σ
   const hasVol = rows.some(r => 'relVol' in r);          // 只有資產卡的列帶量比欄位
+  const colWord = daily ? '日' : '週';                    // tooltip/欄語彙跟著模式走
 
   const width = Math.max(320, container.clientWidth || 800);
   const labelW = Math.min(132, Math.max(88, Math.round(width * 0.16)));
@@ -916,7 +989,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
         .attr('font-weight', isSel ? 800 : 400)  // 粗體跟著選中欄(預設=本週)
         .attr('fill', isSel ? cText : cMuted)
         .attr('pointer-events', 'none')
-        .text(weekLabel(j, nWeeks));
+        .text(colLabel(j, nWeeks, daily, rows[0].cells[j].to));
     }
     if (isSel) {
       // 選中欄:標籤底線 + 整欄圓角外框(粗墨框語彙)
@@ -940,8 +1013,8 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .attr('fill', 'transparent').attr('cursor', 'pointer')
       .on('mouseenter mousemove', (ev) => {
         showTooltip([
-          { text: `${weekLabel(j, nWeeks)}(${span.from} → ${span.to})`, cls: 'tt-label' },
-          { text: isSel && !isLast ? '點擊:回到依本週排序' : '點擊:依此週排序', cls: 'tt-label' },
+          { text: `${colLabel(j, nWeeks, daily, span.to)}(${span.from} → ${span.to})`, cls: 'tt-label' },
+          { text: isSel && !isLast ? `點擊:回到依${daily ? '今天' : '本週'}排序` : `點擊:依此${colWord}排序`, cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
       })
       .on('mouseleave', hideTooltip)
@@ -953,7 +1026,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
     .attr('y', headerH - 8)
     .attr('font-size', 10)
     .attr('fill', cMuted)
-    .text(`${weekLabel(sortIdx, nWeeks)} ${useZ ? 'σ' : '%'}`);
+    .text(`${colLabel(sortIdx, nWeeks, daily, rows[0].cells[sortIdx].to)} ${useZ ? 'σ' : '%'}`);
 
   // 列:keyed join——排序切換時列的 y 位移做 transition,列內容(顏色、數字、tooltip)每次重建
   const rowY = new Map(rows.map((r, i) => [r.name, headerH + i * rowH]));
@@ -1038,13 +1111,13 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       const rk = rankAt.get(row.name)[j];
       rect.on('mouseenter mousemove', (ev) => {
         showTooltip([
-          { text: `${row.name} · ${weekLabel(j, nWeeks)}`, cls: 'tt-label' },
+          { text: `${row.name} · ${colLabel(j, nWeeks, daily, cell.to)}`, cls: 'tt-label' },
           { text: `${cell.from} → ${cell.to}` , cls: 'tt-label' },
-          { text: cell.pct === null ? '—(資料累積中)'
+          { text: cell.pct === null ? (daily ? '—(休市或資料累積中)' : '—(資料累積中)')
             : useZ ? `${fmtPct(cell.pct)}(${fmtZ(cell.z)})` : fmtPct(cell.pct), cls: 'tt-value' },
-          ...(rk ? [{ text: `該週第 ${rk.rank} 名(共 ${rk.of} 項)`, cls: 'tt-label' }] : []),
+          ...(rk ? [{ text: `該${colWord}第 ${rk.rank} 名(共 ${rk.of} 項)`, cls: 'tt-label' }] : []),
           ...volLines,
-          { text: '點擊:依此週排序', cls: 'tt-label' },
+          { text: `點擊:依此${colWord}排序`, cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
       }).on('mouseleave', hideTooltip)
         .on('click', () => clickSort(nWeeks - 1 - j));
@@ -1099,7 +1172,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
     lsvg.node(),
     el('span', '', useZ ? `+${maxAbs}σ(異常流入)` : `${fmtPct(maxAbs, 1)}(流入)`),
     swatch.node(),
-    el('span', '', '資料累積中'),
+    el('span', '', daily ? '休市或資料累積中' : '資料累積中'),
   ];
   if (hasVol) {
     // 放量標記的圖例:一個色格 + 右上角小圓點,與熱力圖上的樣子一致
@@ -1114,13 +1187,13 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
 }
 
 // 表格檢視(熱力圖的無障礙等價版本)
-function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
+function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc, daily = false) {
   const wrap = $(sel);
   const table = el('table');
   const thead = el('thead');
   const hr = el('tr');
   hr.appendChild(el('th', '', headLabel));
-  for (let j = 0; j < nWeeks; j++) hr.appendChild(el('th', '', weekLabel(j, nWeeks)));
+  for (let j = 0; j < nWeeks; j++) hr.appendChild(el('th', '', colLabel(j, nWeeks, daily, rows[0]?.cells[j]?.to)));
   hr.appendChild(el('th', '', '資金動向'));
   if (withSrc) hr.appendChild(el('th', '', '資料源'));
   thead.appendChild(hr);
@@ -1135,7 +1208,7 @@ function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
       tr.appendChild(el('td', cls, cell.pct === null ? '—' : fmtPct(cell.pct)));
     });
     const prev = row.cells[row.cells.length - 2]?.pct ?? null;
-    tr.appendChild(el('td', '', flowVerdict(row.latest, prev)));
+    tr.appendChild(el('td', '', flowVerdict(row.latest, prev, daily ? '今日' : '本週')));
     if (withSrc) tr.appendChild(el('td', '', row.src));
     tbody.appendChild(tr);
   }
@@ -1143,8 +1216,9 @@ function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
   wrap.replaceChildren(table);
 }
 
-// 卡內摘要:本週方向翻轉的列(由流出轉流入/由流入轉流出)——翻轉比持續更值得注意
-function flipSummary(rows) {
+// 卡內摘要:最新一欄方向翻轉的列(由流出轉流入/由流入轉流出)——翻轉比持續更值得注意
+// unit = 最新一欄的稱呼(週模式「本週」、逐日模式「今日」)
+function flipSummary(rows, unit = '本週') {
   const toIn = [], toOut = [];
   for (const r of rows) {
     const prev = r.cells[r.cells.length - 2]?.pct ?? null;
@@ -1154,19 +1228,19 @@ function flipSummary(rows) {
   }
   const cap = (arr) => arr.length > 4 ? `${arr.slice(0, 4).join('、')} 等 ${arr.length} 項` : arr.join('、');
   let s = '';
-  if (toIn.length) s += `本週轉為流入:${cap(toIn)}。`;
-  if (toOut.length) s += `本週轉為流出:${cap(toOut)}。`;
+  if (toIn.length) s += `${unit}轉為流入:${cap(toIn)}。`;
+  if (toOut.length) s += `${unit}轉為流出:${cap(toOut)}。`;
   return s;
 }
 
-// 卡內摘要:本週錢停在哪、從哪撤出(呼叫端須傳入「按本週漲幅排序」的列,不可餵其他排序)
-function flowSummary(rows, inText, outText) {
+// 卡內摘要:最新一欄錢停在哪、從哪撤出(呼叫端須傳入「按最新欄漲幅排序」的列,不可餵其他排序)
+function flowSummary(rows, inText, outText, emptyText = '本週各項變動有限,資金呈觀望。') {
   const inflow = rows.filter(r => r.latest !== null && r.latest > 0.3).slice(0, 3).map(r => r.name);
   const outflow = rows.filter(r => r.latest !== null && r.latest < -0.3).slice(-3).map(r => r.name);
   let s = '';
   if (inflow.length) s += `${inText}:${inflow.join('、')}。`;
   if (outflow.length) s += `${outText}:${outflow.join('、')}。`;
-  return s || '本週各項變動有限,資金呈觀望。';
+  return s || emptyText;
 }
 
 // ===== 兩張流向卡 =====
@@ -1192,38 +1266,46 @@ function copperGoldText() {
 }
 
 function renderAssetCard() {
-  const rows = assetRows(ui.assetWeeks);
+  // 觀察期間 1 週 = 逐日模式:欄=近 7 天的每日漲跌;其餘為每週漲跌
+  const daily = ui.assetWeeks === 1;
+  const nCols = daily ? 7 : ui.assetWeeks;
+  const rows = assetRows(nCols, daily);
   if (!rows.length) return;
-  // 摘要固定用「本週」語意(用按本週排序的複本算),不隨排序週改變
+  // 摘要固定用「最新一欄」語意(用按最新欄排序的複本算),不隨排序欄改變
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
   $('#asset-summary').textContent =
-    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + flipSummary(rows) +
+    (daily
+      ? flowSummary(byLatest, '今日資金停泊處', '今日撤出', '今日各項變動有限,資金呈觀望。') + flipSummary(rows, '今日')
+      : flowSummary(byLatest, '本週資金停泊處', '本週撤出') + flipSummary(rows)) +
     oilSpreadText() + copperGoldText();
-  if (ui.assetSortAgo > ui.assetWeeks - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序週回到本週
+  if (ui.assetSortAgo > nCols - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序欄回到最新
   const useZ = ui.assetScale === 'z';
-  const sorted = sortRowsByWeek(rows, ui.assetWeeks, ui.assetSortAgo, useZ);
+  const sorted = sortRowsByWeek(rows, nCols, ui.assetSortAgo, useZ);
   if (ui.assetView === 'chart') {
-    renderHeatmap('#asset-heatmap', '#asset-legend', sorted, ui.assetWeeks, 'hatch-asset',
-      ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); }, useZ);
+    renderHeatmap('#asset-heatmap', '#asset-legend', sorted, nCols, 'hatch-asset',
+      ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); }, useZ, daily);
   } else {
-    renderFlowTable('#asset-table', sorted, ui.assetWeeks, '資產', true);
+    renderFlowTable('#asset-table', sorted, nCols, '資產', true, daily);
   }
 }
 
 function renderRegionCard() {
-  const rows = regionRows(ui.regionWeeks);
+  const daily = ui.regionWeeks === 1;
+  const nCols = daily ? 7 : ui.regionWeeks;
+  const rows = regionRows(nCols, daily);
   if (!rows.length) return;
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
-  $('#region-summary').textContent =
-    flowSummary(byLatest, '近一週資金傾向流入', '傾向流出') + flipSummary(rows);
-  if (ui.regionSortAgo > ui.regionWeeks - 1) ui.regionSortAgo = 0;
+  $('#region-summary').textContent = daily
+    ? flowSummary(byLatest, '今日資金傾向流入', '傾向流出', '今日各項變動有限,資金呈觀望。') + flipSummary(rows, '今日')
+    : flowSummary(byLatest, '近一週資金傾向流入', '傾向流出') + flipSummary(rows);
+  if (ui.regionSortAgo > nCols - 1) ui.regionSortAgo = 0;
   const useZ = ui.regionScale === 'z';
-  const sorted = sortRowsByWeek(rows, ui.regionWeeks, ui.regionSortAgo, useZ);
+  const sorted = sortRowsByWeek(rows, nCols, ui.regionSortAgo, useZ);
   if (ui.regionView === 'chart') {
-    renderHeatmap('#region-heatmap', '#region-legend', sorted, ui.regionWeeks, 'hatch-region',
-      ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); }, useZ);
+    renderHeatmap('#region-heatmap', '#region-legend', sorted, nCols, 'hatch-region',
+      ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); }, useZ, daily);
   } else {
-    renderFlowTable('#region-table', sorted, ui.regionWeeks, '區域', false);
+    renderFlowTable('#region-table', sorted, nCols, '區域', false, daily);
   }
 }
 

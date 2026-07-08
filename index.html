@@ -43,10 +43,10 @@
       <div class="card-controls">
         <span class="seg-label">觀察期間</span>
         <div class="seg-toggle" id="twd-weeks" role="tablist">
-          <button type="button" data-weeks="1">1 週</button>
+          <button type="button" data-weeks="1" class="active">1 週</button>
           <button type="button" data-weeks="4">4 週</button>
           <button type="button" data-weeks="8">8 週</button>
-          <button type="button" data-weeks="12" class="active">12 週</button>
+          <button type="button" data-weeks="12">12 週</button>
         </div>
       </div>
     </div>
@@ -123,8 +123,8 @@
       <div class="card-controls">
         <span class="seg-label">觀察期間</span>
         <div class="seg-toggle" id="asset-weeks" role="tablist">
-          <button type="button" data-weeks="1">1 週</button>
-          <button type="button" data-weeks="4" class="active">4 週</button>
+          <button type="button" data-weeks="1" class="active">1 週</button>
+          <button type="button" data-weeks="4">4 週</button>
           <button type="button" data-weeks="8">8 週</button>
           <button type="button" data-weeks="12">12 週</button>
         </div>
@@ -138,7 +138,7 @@
         </div>
       </div>
     </div>
-    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出)。顏色預設為波動標準化(σ):該週漲跌除以各資產自身的週波動度——比特幣週漲 3% 是日常、美元指數漲 3% 是大事,深淺代表「這個動作對該資產有多不尋常」,跨資產才可比,|σ| 超過 2 就值得注意;切到「漲跌 %」可改看原始幅度。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。本週格右上角的小圓點=今日放量(成交量 ≥ 近 10 日均量的 1.5 倍)——價格動作有量在背書,不是縮量虛動,確切量比滑到格子上可見(外匯與現貨金屬沒有集中成交量,無此標記)。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。滑到任一列上,會直接在圖上疊出該資產的名次軌跡線——線在各週間的起伏就是名次變化:往上竄=錢湧向它、往下沉=錢離開它;滑到格子上可看該週名次與幅度。</p>
+    <p class="card-desc">列=資產、欄=週(左舊右新;觀察期間選 1 週時欄=日,格=該日漲跌,「今天」欄為即時值,週末休市或資料尚未累積的日子顯示白底斜線格,約一週後補齊),藍=該週上漲(資金流入傾向)、紅=下跌(流出)。顏色預設為波動標準化(σ):該週漲跌除以各資產自身的週波動度——比特幣週漲 3% 是日常、美元指數漲 3% 是大事,深淺代表「這個動作對該資產有多不尋常」,跨資產才可比,|σ| 超過 2 就值得注意;切到「漲跌 %」可改看原始幅度。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。本週格右上角的小圓點=今日放量(成交量 ≥ 近 10 日均量的 1.5 倍)——價格動作有量在背書,不是縮量虛動,確切量比滑到格子上可見(外匯與現貨金屬沒有集中成交量,無此標記)。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。滑到任一列上,會直接在圖上疊出該資產的名次軌跡線——線在各週間的起伏就是名次變化:往上竄=錢湧向它、往下沉=錢離開它;滑到格子上可看該週名次與幅度。</p>
     <p class="card-summary" id="asset-summary"></p>
     <div id="asset-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="asset-legend"></div>
@@ -153,8 +153,8 @@
       <div class="card-controls">
         <span class="seg-label">觀察期間</span>
         <div class="seg-toggle" id="region-weeks" role="tablist">
-          <button type="button" data-weeks="1">1 週</button>
-          <button type="button" data-weeks="4" class="active">4 週</button>
+          <button type="button" data-weeks="1" class="active">1 週</button>
+          <button type="button" data-weeks="4">4 週</button>
           <button type="button" data-weeks="8">8 週</button>
           <button type="button" data-weeks="12">12 週</button>
         </div>
@@ -168,7 +168,7 @@
         </div>
       </div>
     </div>
-    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。顏色預設以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常;切到「升貶 %」可改看原始幅度。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。滑到任一列上,會直接在圖上疊出該貨幣的名次軌跡線——往上竄=資金湧向它、往下沉=資金離開它;滑到格子上可看該週名次與幅度。</p>
+    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標(觀察期間選 1 週時改看每日升貶;匯市週末休市,週末欄顯示白底斜線格):藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。顏色預設以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常;切到「升貶 %」可改看原始幅度。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。滑到任一列上,會直接在圖上疊出該貨幣的名次軌跡線——往上竄=資金湧向它、往下沉=資金離開它;滑到格子上可看該週名次與幅度。</p>
     <p class="card-summary" id="region-summary"></p>
     <div id="region-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="region-legend"></div>
