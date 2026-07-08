@@ -201,7 +201,8 @@ section { margin-bottom: 34px; }
   padding: 4px 14px;
   transform: rotate(-0.8deg);
 }
-#twd-card    { --card-accent: var(--mem-cyan); }
+#twd-card     { --card-accent: var(--mem-cyan); }
+#foreign-card { --card-accent: #c9b3ff; }   /* 淺紫(裝飾色,非資料色) */
 #asset-card  { --card-accent: var(--mem-yellow); }
 #region-card { --card-accent: #3fd1d1; }
 #bond-card   { --card-accent: var(--mem-pink); }

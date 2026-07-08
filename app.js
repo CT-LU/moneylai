@@ -7,7 +7,9 @@
      新興市場貨幣籃、區域資金流向(抓 92 天,供最長 12 週熱力圖)
    - CoinGecko market_chart(days=95,回日資料)→ BTC / ETH / 黃金(PAXG)
    - TradingView scanner → 原油 WTI/布蘭特、銅、綠能(ICLN)、AI(AIQ)
-     即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣
+     即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣;
+     日債 10 年殖利率(美日利差)、黃金現貨(銅金比)、HYG/LQD(信用風險胃納)
+   - TWSE 三大法人買賣金額統計表 → 台股外資每日買賣超(熱錢進出台灣的直接觀測)
    - BLS 官方 API → 非農就業、失業率;DBnomics(BEA 鏡像)→ 核心 PCE 物價指數
    - fawazahmed0 currency-api(jsDelivr / pages.dev 備援)→ 新台幣對美元、
      日圓、歐元、人民幣的歷史匯率(ECB 沒有 TWD)
@@ -76,11 +78,22 @@ const BOND_TENORS = [
 
 const VIX_SYM = 'TVC:VIX';
 
+// 熱錢驅動因子與比率指標(不進熱力圖,供判讀用):
+// 美日 10 年利差(套利資金的引擎)、銅金比(增長 vs 避險)、HYG/LQD(信用風險胃納)
+const JP10Y_SYM = 'TVC:JP10Y';
+const GOLD_SYM  = 'TVC:GOLD';
+const HYG_SYM   = 'AMEX:HYG';
+const LQD_SYM   = 'AMEX:LQD';
+
 const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
   { sym: VIX_SYM, ep: 'global', name: 'VIX' },
   { sym: TWD_REGION.sym, ep: 'global', name: '美元兌台幣' },
+  { sym: JP10Y_SYM, ep: 'global', name: '日債 10 年' },
+  { sym: GOLD_SYM,  ep: 'global', name: '黃金現貨' },
+  { sym: HYG_SYM,   ep: 'global', name: '高收益債 HYG' },
+  { sym: LQD_SYM,   ep: 'global', name: '投資級債 LQD' },
 ];
 
 // 總經月資料(聯準會雙重使命:物價 + 就業)
@@ -97,10 +110,17 @@ const TWDFX_CURRENCIES = [
 ];
 const TWDFX_KEY = 'moneylai-twdfx-history';
 
+// 台股外資買賣超(TWSE 三大法人買賣金額統計表 BFI82U):
+// 一次只回單日,歷史單日用 dayDate=YYYYMMDD 查(date 參數無效、type=month 只回整月合計);
+// 非交易日 stat != OK;當日資料收盤後(約 15:00 台灣時間)才發布
+const BFI_KEY = 'moneylai-bfi-history';
+const FOREIGN_TRADING_DAYS = 20;   // 顯示近 20 個交易日
+
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
 const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
 const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
 const MACRO_POLL_MS = 6 * 60 * 60 * 1000; // 總經是月資料,6 小時輪詢綽綽有餘
+const FOREIGN_POLL_MS = 60 * 60 * 1000;   // 外資買賣超一天更新一次,每小時輪詢即可
 
 const DAY_MS = 86400e3;
 
@@ -112,6 +132,7 @@ const state = {
   cryptoHist: null, // { coinId: [{ date, value }] } 95 日日收盤
   macro: null,      // { pce, nfp, unrate } 各為 [{ date:'YYYY-MM', value }]
   twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
+  foreign: null,    // [{ date, net }] 台股外資買賣超(億元,升冪,僅交易日)
 };
 
 // 介面狀態:兩張熱力圖各自的觀察週數、檢視模式與排序週(sortAgo=k 週前,0=本週);台幣匯率卡的觀察週數
@@ -132,6 +153,8 @@ function el(tag, className, text) {
 }
 
 function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function fmtPct(n, digits = 2) {
   if (!Number.isFinite(n)) return '—';
@@ -255,6 +278,81 @@ async function fetchTwdFx() {
   catch { /* 隱私模式寫入失敗:僅影響下次載入速度 */ }
 
   state.twdfx = Object.keys(hist).sort().map(d => ({ date: d, ...hist[d] }));
+}
+
+// ===== 台股外資買賣超(TWSE 三大法人買賣金額統計表)=====
+// 熱錢進出台灣少數可「直接觀測」的數字(其餘皆為價格代理)。
+// 歷史值收盤後即定案 → localStorage 永久快取(null = 已確認的非交易日);
+// 首次載入逐日回補約一個月,TWSE 有頻率限制,請求之間要間隔。
+
+// 台灣時區(UTC+8)往前 offsetDays 天的日曆日:瀏覽器不一定在台灣
+function twDate(offsetDays) {
+  const d = new Date(Date.now() + 8 * 3600e3 - offsetDays * DAY_MS);
+  return { iso: d.toISOString().slice(0, 10), dow: d.getUTCDay() };
+}
+
+function loadBfiHist() {
+  try { return JSON.parse(localStorage.getItem(BFI_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function saveBfiHist(hist) {
+  const cutoff = twDate(60).iso;   // 只留 60 天,不無限累積
+  for (const d of Object.keys(hist)) if (d < cutoff) delete hist[d];
+  try { localStorage.setItem(BFI_KEY, JSON.stringify(hist)); }
+  catch { /* 隱私模式寫入失敗:僅影響下次載入速度 */ }
+}
+
+function updateForeignState(hist) {
+  state.foreign = Object.entries(hist)
+    .filter(([, v]) => Number.isFinite(v))
+    .map(([date, net]) => ({ date, net }))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-FOREIGN_TRADING_DAYS);
+}
+
+// 單日外資買賣差額(億元);null = 非交易日或當日尚未發布
+async function fetchBfiDay(iso) {
+  const url = `https://www.twse.com.tw/rwd/zh/fund/BFI82U?type=day&dayDate=${iso.replaceAll('-', '')}&response=json`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`TWSE ${res.status}`);
+  const json = await res.json();
+  if (json.stat !== 'OK' || !Array.isArray(json.data)) return null;
+  // 「外資及陸資(不含外資自營商)」+「外資自營商」;部分日期的格式只有單一「外資」列
+  let sum = 0, found = false;
+  for (const row of json.data) {
+    if (typeof row[0] === 'string' && row[0].startsWith('外資')) {
+      const v = Number(String(row[3]).replace(/,/g, ''));
+      if (Number.isFinite(v)) { sum += v; found = true; }
+    }
+  }
+  return found ? Math.round(sum / 1e6) / 100 : null;   // 元 → 億元
+}
+
+// 回補缺漏的交易日;部分失敗回傳第一個錯誤(顯示既有快取,下次輪詢再補)
+async function fetchForeign() {
+  const hist = loadBfiHist();
+  updateForeignState(hist);
+  renderForeignCard();               // 先用快取畫,回補中逐步補齊
+  const today = twDate(0).iso;
+  let firstErr = null, fetched = 0;
+  for (let k = 0; k < 35; k++) {     // 近 35 個日曆日,足以湊滿 20 個交易日
+    const { iso, dow } = twDate(k);
+    if (dow === 0 || dow === 6) continue;      // 跳過週六日
+    if (hist[iso] !== undefined) continue;     // 已快取(含確認休市的 null)
+    if (fetched > 0) await sleep(1100);        // TWSE 頻率限制:逐日間隔抓
+    try {
+      const v = await fetchBfiDay(iso);
+      fetched++;
+      if (v !== null) hist[iso] = v;
+      else if (iso !== today) hist[iso] = null; // 當日可能只是尚未發布,不快取
+      saveBfiHist(hist);
+      updateForeignState(hist);
+      renderForeignCard();
+    } catch (e) { firstErr ??= e; }
+  }
+  if (firstErr && !state.foreign?.length) throw firstErr;
+  return firstErr;
 }
 
 // TradingView scanner:一次 POST 拿多檔報價
@@ -812,13 +910,24 @@ function oilSpreadText() {
   return `布蘭特 $${brent.close.toFixed(2)} − WTI $${wti.close.toFixed(2)},價差 $${spread.toFixed(2)}。`;
 }
 
+// 銅金比:銅=實體增長需求、金=避險;比值升 = 增長預期壓過避險(經典 risk-on 領先訊號)
+function copperGoldText() {
+  const cu = state.scanner?.['OANDA:XCUUSD'];
+  const au = state.scanner?.[GOLD_SYM];
+  if (!Number.isFinite(cu?.perfW) || !Number.isFinite(au?.perfW)) return '';
+  const dW = ((1 + cu.perfW / 100) / (1 + au.perfW / 100) - 1) * 100;
+  const verdict = dW > 0.5 ? '增長預期壓過避險(偏 risk-on)'
+    : dW < -0.5 ? '避險需求壓過增長(偏 risk-off)' : '增長與避險大致平衡';
+  return `銅金比本週 ${fmtPct(dW)},${verdict}。`;
+}
+
 function renderAssetCard() {
   const rows = assetRows(ui.assetWeeks);
   if (!rows.length) return;
   // 摘要固定用「本週」語意(用按本週排序的複本算),不隨排序週改變
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
   $('#asset-summary').textContent =
-    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + oilSpreadText();
+    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + oilSpreadText() + copperGoldText();
   if (ui.assetSortAgo > ui.assetWeeks - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序週回到本週
   const sorted = sortRowsByWeek(rows, ui.assetWeeks, ui.assetSortAgo);
   if (ui.assetView === 'chart') {
@@ -871,6 +980,25 @@ function vixPoint() {
   if (!q || !Number.isFinite(q.close)) return null;
   const wAgo = Number.isFinite(q.perfW) ? q.close / (1 + q.perfW / 100) : null;
   return { now: q.close, dW: wAgo !== null ? q.close - wAgo : null };
+}
+
+// 美日 10 年利差(百分點):日圓套利交易的引擎;收窄 = 平倉壓力(risk-off 前哨)
+function usJpSpread() {
+  const us = state.scanner?.['TVC:US10Y'];
+  const jp = state.scanner?.[JP10Y_SYM];
+  if (!Number.isFinite(us?.close) || !Number.isFinite(jp?.close)) return null;
+  const now = us.close - jp.close;
+  const dW = (Number.isFinite(us.perfW) && Number.isFinite(jp.perfW))
+    ? now - (us.close / (1 + us.perfW / 100) - jp.close / (1 + jp.perfW / 100))
+    : null;   // 一週前利差由兩檔的 Perf.W 反推
+  return { now, dW };
+}
+
+// 美日利差的跨日累積序列(兩檔同日都有紀錄才算得出來;啟用初期只有少數點)
+function usJpSpreadSeries() {
+  const jp = new Map(scannerSeries(JP10Y_SYM).map(p => [p.date, p.value]));
+  return scannerSeries('TVC:US10Y')
+    .flatMap(p => jp.has(p.date) ? [{ date: p.date, value: p.value - jp.get(p.date) }] : []);
 }
 
 function renderBondChart(data) {
@@ -1071,6 +1199,42 @@ function renderBondRead(data, vix) {
   );
 }
 
+// 風險胃納合讀:套利端(美日利差)、信用端(HYG 相對 LQD)、股債比(SPX 相對 TLT)
+function renderRiskRead() {
+  const p = $('#risk-read');
+  const parts = [];
+
+  const sp = usJpSpread();
+  if (sp) {
+    const bp = Number.isFinite(sp.dW) ? sp.dW * 100 : null;
+    const verdict = bp === null || Math.abs(bp) < 3 ? '變化有限'
+      : bp > 0 ? '利差走闊,借日圓買美元資產的套利誘因升溫(偏 risk-on)'
+      : '利差收窄,套利平倉壓力升溫——留意資金回流日圓引發的避險連鎖';
+    parts.push(`套利端:美日 10 年利差 ${sp.now.toFixed(2)} 個百分點` +
+      (bp === null ? '' : `(週${fmtBp(bp, 0)})`) + `,${verdict}。`);
+  }
+
+  const hyg = state.scanner?.[HYG_SYM], lqd = state.scanner?.[LQD_SYM];
+  if (Number.isFinite(hyg?.perfW) && Number.isFinite(lqd?.perfW)) {
+    const rel = hyg.perfW - lqd.perfW;
+    const verdict = rel > 0.3 ? '高收益債相對強,信用市場的風險胃納偏強'
+      : rel < -0.3 ? '高收益債相對弱,信用市場先行轉趨保守(常領先股市)'
+      : '信用市場中性';
+    parts.push(`信用端:高收益債(HYG)本週 ${fmtPct(hyg.perfW)}、相對投資級(LQD)` +
+      `${rel > 0 ? '+' : ''}${rel.toFixed(1)} 個百分點,${verdict}。`);
+  }
+
+  const spx = state.scanner?.['SP:SPX'], tlt = state.scanner?.['NASDAQ:TLT'];
+  if (Number.isFinite(spx?.perfW) && Number.isFinite(tlt?.perfW)) {
+    const rel = spx.perfW - tlt.perfW;
+    const verdict = rel > 0.5 ? '資金偏股(risk-on)' : rel < -0.5 ? '資金偏債(避險)' : '股債均衡';
+    parts.push(`股債比:S&P 500 本週 ${fmtPct(spx.perfW)}、債市 TLT ${fmtPct(tlt.perfW)},${verdict}。`);
+  }
+
+  if (!parts.length) { p.textContent = ''; return; }
+  p.replaceChildren(el('span', 'bond-tag', '風險胃納'), document.createTextNode(parts.join(' ')));
+}
+
 function renderBondCard() {
   const data = bondPoints();
   if (data) {
@@ -1078,6 +1242,7 @@ function renderBondCard() {
     renderBondStats(data);
     renderBondRead(data, vixPoint());
   }
+  renderRiskRead();
   renderMacroTrends();
   renderMacroRead();
 }
@@ -1174,7 +1339,7 @@ function renderMiniTrend(container, def, series) {
   container.replaceChildren(svg.node());
 }
 
-// 四張迷你趨勢:VIX(scanner 累積)+ 核心 PCE / 非農 / 失業率(月資料)
+// 五張迷你趨勢:VIX、美日 10 年利差(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
 function macroTrendDefs() {
   const vix = scannerSeries(VIX_SYM);
   const defs = [];
@@ -1183,6 +1348,14 @@ function macroTrendDefs() {
       key: 'vix', label: 'VIX 恐慌指數', series: vix,
       fmt: v => v.toFixed(1), deltaUnit: ' 點', ref: 20, refLabel: '20 警戒',
       note: vix.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  const usjp = usJpSpreadSeries();
+  if (usjp.length >= 2) {
+    defs.push({
+      key: 'usjp', label: '美日 10 年利差(百分點)', series: usjp,
+      fmt: v => v.toFixed(2), deltaUnit: ' 百分點', digits: 2, ref: null,
+      note: usjp.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
     });
   }
   if (state.macro) {
@@ -1481,6 +1654,192 @@ function renderTwdCard() {
   renderTwdRead(win, nWeeks);
 }
 
+// ===== 台股外資買賣超卡 =====
+
+function fmtNetBillions(v) {
+  // 億元,千分位;帶 +/- 符號(不靠顏色單獨表意)
+  return `${v > 0 ? '+' : ''}${Math.round(v).toLocaleString('zh-TW')} 億`;
+}
+
+// 卡頭三個數字盒:最新交易日、近 5 日累計、近 20 日累計
+// (方向用文字「買超/賣超」標示,不用紅綠 —— 避免與圖上藍=流入/紅=流出的語彙打架)
+function renderForeignStats(rows) {
+  const grid = $('#foreign-stats');
+  const latest = rows[rows.length - 1];
+  const sum = (n) => rows.slice(-n).reduce((s, r) => s + r.net, 0);
+  const items = [
+    { label: `最新交易日(${latest.date.slice(5)})`, v: latest.net },
+    { label: '近 5 個交易日累計', v: sum(5) },
+    { label: `近 ${rows.length} 個交易日累計`, v: sum(rows.length) },
+  ];
+  grid.replaceChildren(...items.map(({ label, v }) => {
+    const box = el('div', 'macro-box');
+    const head = el('div', 'macro-head');
+    head.appendChild(el('span', 'label', label));
+    head.appendChild(el('span', 'value', fmtNetBillions(v)));
+    head.appendChild(el('span', 'delta flat',
+      Math.abs(v) < 1 ? '大致平衡' : v > 0 ? '買超(流入)' : '賣超(流出)'));
+    box.appendChild(head);
+    return box;
+  }));
+}
+
+// 每日買賣超長條圖:藍=買超(流入)、紅=賣超(流出),與熱力圖同一組 diverging 資料色
+function renderForeignChart(rows) {
+  const container = $('#foreign-chart');
+  const width = Math.max(320, container.clientWidth || 640);
+  const height = 190;
+  const m = { top: 18, right: 12, bottom: 24, left: 56 };
+
+  const ink = cssVar('--ink');
+  const cGrid = cssVar('--grid');
+  const cMuted = cssVar('--text-muted');
+  const cText = cssVar('--text-primary');
+  const cIn = cssVar('--series-in');
+  const cOut = cssVar('--series-out');
+
+  const x = d3.scaleBand()
+    .domain(rows.map(r => r.date))
+    .range([m.left, width - m.right])
+    .paddingInner(0.3).paddingOuter(0.1);
+  const maxAbs = Math.max(50, d3.max(rows, r => Math.abs(r.net)));
+  const y = d3.scaleLinear()
+    .domain([-maxAbs * 1.15, maxAbs * 1.15])
+    .range([height - m.bottom, m.top]);
+
+  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+
+  for (const t of y.ticks(4)) {
+    if (t === 0) continue;
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(t)).attr('y2', y(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 6).attr('y', y(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .text(t.toLocaleString('zh-TW'));
+  }
+  svg.append('text')
+    .attr('x', m.left - 6).attr('y', m.top - 6)
+    .attr('text-anchor', 'end').attr('font-size', 9.5).attr('fill', cMuted)
+    .text('億元');
+  // 零線(基準線,比網格線重)
+  svg.append('line')
+    .attr('x1', m.left).attr('x2', width - m.right)
+    .attr('y1', y(0)).attr('y2', y(0))
+    .attr('stroke', ink).attr('stroke-width', 1.5);
+
+  // 日期標籤:約五個,最後一天永遠標
+  const every = Math.max(1, Math.ceil(rows.length / 5));
+  rows.forEach((r, i) => {
+    const isLast = i === rows.length - 1;
+    if (!isLast && (i % every !== 0 || rows.length - 1 - i < every / 2)) return;
+    svg.append('text')
+      .attr('x', x(r.date) + x.bandwidth() / 2).attr('y', height - 6)
+      .attr('text-anchor', 'middle').attr('font-size', 10).attr('fill', cMuted)
+      .text(r.date.slice(5));
+  });
+
+  for (const r of rows) {
+    const pos = r.net >= 0;
+    svg.append('rect')
+      .attr('x', x(r.date))
+      .attr('y', pos ? y(r.net) : y(0))
+      .attr('width', x.bandwidth())
+      .attr('height', Math.max(1.5, Math.abs(y(r.net) - y(0))))
+      .attr('rx', 2.5)
+      .attr('fill', pos ? cIn : cOut)
+      .attr('stroke', ink).attr('stroke-width', 1.2)
+      .on('mouseenter mousemove', (ev) => {
+        showTooltip([
+          { text: r.date, cls: 'tt-label' },
+          { text: `外資${pos ? '買超' : '賣超'} ${Math.abs(r.net).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 億`, cls: 'tt-value' },
+        ], ev.clientX, ev.clientY);
+      })
+      .on('mouseleave', hideTooltip);
+  }
+
+  // 只直接標最新一根(選擇性標示,不在每根上放數字)
+  const last = rows[rows.length - 1];
+  const ly = last.net >= 0
+    ? Math.max(m.top - 6, y(last.net) - 5)
+    : Math.min(height - m.bottom - 3, y(last.net) + 12);
+  svg.append('text')
+    .attr('x', x(last.date) + x.bandwidth() / 2).attr('y', ly)
+    .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('font-weight', 700)
+    .attr('fill', cText)
+    .text(fmtNetBillions(last.net).replace(' 億', ''));
+
+  container.replaceChildren(svg.node());
+}
+
+function renderForeignLegend() {
+  const box = $('#foreign-legend');
+  const mk = (color, text) => {
+    const chip = el('span', 'twd-chip');
+    const sw = el('span', 'twd-swatch');
+    sw.style.background = color;
+    chip.appendChild(sw);
+    chip.appendChild(document.createTextNode(text));
+    return chip;
+  };
+  box.replaceChildren(
+    mk(cssVar('--series-in'), '買超=資金流入'),
+    mk(cssVar('--series-out'), '賣超=資金流出'),
+  );
+}
+
+// 外資動向判讀:連續同向天數 + 近 5 日累計,並與台幣一週升貶對照(雙重確認才算數)
+function renderForeignRead(rows) {
+  const p = $('#foreign-read');
+  const sum5 = rows.slice(-5).reduce((s, r) => s + r.net, 0);
+  const dir = Math.sign(rows[rows.length - 1].net);
+  let streak = 0;
+  for (let i = rows.length - 1; i >= 0 && dir !== 0 && Math.sign(rows[i].net) === dir; i--) streak++;
+
+  // 台幣近一週對美元升貶(正 = 台幣貶;與台幣匯率卡同一份資料)
+  let twdPct = null;
+  if (state.twdfx && state.twdfx.length >= 2) {
+    const s = state.twdfx;
+    const latest = s[s.length - 1];
+    const wk = valueNear(
+      s.slice(0, -1).map(q => ({ date: q.date, value: q.usd })),
+      new Date(latest.date).getTime() - 7 * DAY_MS);
+    if (wk) twdPct = pctChange(wk.value, latest.usd);
+  }
+
+  const streakText = streak >= 3 ? `已連續 ${streak} 個交易日${dir > 0 ? '買超' : '賣超'};` : '';
+  const sumText = `近 5 個交易日累計${sum5 >= 0 ? '買超' : '賣超'} ${Math.abs(Math.round(sum5)).toLocaleString('zh-TW')} 億`;
+
+  let verdict;
+  if (sum5 < -50 && twdPct !== null && twdPct > 0.1) {
+    verdict = '外資賣超與台幣走貶同向——熱錢流出台灣的訊號獲得雙重確認。';
+  } else if (sum5 > 50 && twdPct !== null && twdPct < -0.1) {
+    verdict = '外資買超與台幣走升同向——資金流入台灣的訊號獲得雙重確認。';
+  } else if (sum5 < -50 && twdPct !== null && twdPct < -0.1) {
+    verdict = '外資賣超但台幣走升,兩個訊號分歧(可能有出口商拋匯或央行調節),先別急著下結論。';
+  } else if (sum5 > 50 && twdPct !== null && twdPct > 0.1) {
+    verdict = '外資買超但台幣走貶,兩個訊號分歧,資金面與匯率面暫時脫鉤。';
+  } else {
+    verdict = '外資進出與台幣波動都有限,資金面對台灣暫呈觀望。';
+  }
+
+  p.replaceChildren(
+    el('span', 'bond-tag', '外資動向'),
+    document.createTextNode(`${streakText}${sumText}。${verdict}`),
+  );
+}
+
+function renderForeignCard() {
+  const rows = state.foreign;
+  if (!rows || !rows.length) return;   // 資料未到:保留前一次渲染
+  renderForeignStats(rows);
+  renderForeignChart(rows);
+  renderForeignLegend();
+  renderForeignRead(rows);
+}
+
 // ===== TradingView widget =====
 
 function mountTradingView() {
@@ -1557,6 +1916,7 @@ function mountTradingView() {
 
 function renderAll() {
   renderTwdCard();
+  renderForeignCard();
   renderAssetCard();
   renderRegionCard();
   renderBondCard();
@@ -1601,6 +1961,29 @@ async function refreshMacro() {
   }
 }
 
+// 外資買賣超:更新狀態直接標在卡的註腳(TWSE 波動不該把頁首「匯率資料」燈拉紅);
+// 首次回補受 TWSE 限速要跑數十秒,以旗標避免重複觸發
+let foreignBusy = false;
+
+async function refreshForeign() {
+  if (foreignBusy) return;
+  foreignBusy = true;
+  const status = $('#foreign-status');
+  const t = () => new Date().toLocaleTimeString('zh-TW', { hour12: false });
+  try {
+    const partialErr = await fetchForeign();
+    status.textContent = partialErr
+      ? ` ⚠ 部分日期抓取失敗,顯示既有快取(${t()})`
+      : ` 更新於 ${t()}。`;
+  } catch (e) {
+    console.error('外資買賣超更新失敗:', e);
+    status.textContent = ' ⚠ 更新失敗,顯示上次快取。';
+  } finally {
+    foreignBusy = false;
+    renderForeignCard();
+  }
+}
+
 let historyRetryTimer = null;
 
 async function refreshCryptoHistory() {
@@ -1625,6 +2008,7 @@ async function refreshCryptoHistory() {
 async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
+  refreshForeign();   // 不 await:首次回補逐日限速要跑數十秒,不佔住更新按鈕
   await Promise.allSettled([refreshFX(), refreshScanner(), refreshMacro()]);
   await refreshCryptoHistory();
   btn.disabled = false;
@@ -1691,6 +2075,7 @@ function main() {
   setInterval(refreshScanner, SCANNER_POLL_MS);
   setInterval(refreshCryptoHistory, HISTORY_POLL_MS);
   setInterval(refreshMacro, MACRO_POLL_MS);
+  setInterval(refreshForeign, FOREIGN_POLL_MS);
 }
 
 main();
