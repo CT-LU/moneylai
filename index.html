@@ -13,7 +13,7 @@
   <header class="page-header">
     <div>
       <h1>全球資金流向儀表板</h1>
-      <p class="subtitle">追蹤熱錢的去向:美元、日圓套利、加密貨幣、黃金與新興市場</p>
+      <p class="subtitle">追蹤熱錢的去向:美元、日圓套利、加密貨幣、黃金、原油與 AI 板塊</p>
     </div>
     <div class="update-status">
       <button id="refresh-btn" type="button">立即更新</button>
@@ -30,98 +30,89 @@
         <span id="ts-taiex" class="ts">--</span>
       </div>
       <div class="status-line">
-        <span class="status-dot" id="dot-scanner" title="商品報價狀態"></span>商品報價
+        <span class="status-dot" id="dot-scanner" title="商品與債券報價狀態"></span>商品債券
         <span id="ts-scanner" class="ts">--</span>
       </div>
     </div>
   </header>
 
-  <!-- ===== 資金流向判讀(核心區塊)===== -->
-  <section class="card verdict-card" id="verdict-card">
-    <div class="verdict-main">
-      <div class="verdict-label">目前資金流向判讀</div>
-      <div class="verdict-hero" id="verdict-text">載入中…</div>
-      <div class="verdict-meter">
-        <div class="meter-track">
-          <div class="meter-center"></div>
-          <div class="meter-marker" id="meter-marker"></div>
-        </div>
-        <div class="meter-scale">
-          <span>-100 避險(Risk-off)</span>
-          <span>0</span>
-          <span>+100 風險偏好(Risk-on)</span>
-        </div>
-      </div>
-      <p class="verdict-summary" id="verdict-summary"></p>
-    </div>
-    <div class="verdict-signals">
-      <div class="signals-title">判讀依據的訊號</div>
-      <ul id="signal-list" class="signal-list"></ul>
-    </div>
-  </section>
-
-  <!-- ===== 即時指標卡片 ===== -->
-  <section>
-    <h2>關鍵指標</h2>
-    <div class="tile-grid" id="tile-grid">
-      <!-- 由 app.js 動態產生 stat tiles -->
-    </div>
-  </section>
-
-  <!-- ===== 資產資金流向(本週 vs 前週)===== -->
+  <!-- ===== 資產資金流向(近 N 週熱力圖)===== -->
   <section class="card" id="asset-card">
     <div class="card-head">
-      <div>
-        <h2>資產資金流向(本週 vs 前週)</h2>
-        <p class="card-desc">各類資產近一週與前一週的漲跌對照:實色為本週、半透明為前週,兩條並看就能看出資金往哪裡移動、目前停在哪裡。</p>
-      </div>
-      <div class="view-toggle" role="tablist">
-        <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">圖表</button>
-        <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
+      <h2 class="card-title">資產資金流向</h2>
+      <div class="card-controls">
+        <span class="seg-label">觀察期間</span>
+        <div class="seg-toggle" id="asset-weeks" role="tablist">
+          <button type="button" data-weeks="4" class="active">4 週</button>
+          <button type="button" data-weeks="8">8 週</button>
+          <button type="button" data-weeks="12">12 週</button>
+        </div>
+        <div class="seg-toggle" role="tablist">
+          <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">熱力圖</button>
+          <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
+        </div>
       </div>
     </div>
-    <div class="flow-legend">
-      <span class="key"><span class="swatch swatch-in"></span>上漲(資金流入傾向)</span>
-      <span class="key"><span class="swatch swatch-out"></span>下跌(資金流出傾向)</span>
-    </div>
-    <div id="asset-chart" class="region-chart"></div>
+    <p class="card-desc">列=資產、欄=週(左舊右新),藍=該週上漲(資金流入傾向)、紅=下跌(流出),顏色越深幅度越大。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。</p>
+    <p class="card-summary" id="asset-summary"></p>
+    <div id="asset-heatmap" class="heatmap-wrap"></div>
+    <div class="hm-legend" id="asset-legend"></div>
     <div id="asset-table" class="region-table" hidden></div>
-    <p class="card-footnote">原油、銅、綠能的報價來自 TradingView,該來源僅提供近一週表現;「前週」由本頁跨日累積推算,啟用初期會顯示「—(資料累積中)」,約一週後補齊。</p>
+    <p class="card-footnote">原油、銅、綠能(ICLN)、AI(AIQ)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本頁跨日累積推算,啟用初期會顯示斜線格(資料累積中),約四週後補齊。</p>
   </section>
 
-  <!-- ===== 區域資金流向 ===== -->
+  <!-- ===== 區域資金流向(近 N 週熱力圖)===== -->
   <section class="card" id="region-card">
     <div class="card-head">
-      <div>
-        <h2>區域資金流向(近 30 日)</h2>
-        <p class="card-desc">以各區域貨幣兌美元的升貶值作為資金流入/流出的代理指標:貨幣升值 = 資金流入傾向,貶值 = 資金流出傾向。</p>
-      </div>
-      <div class="view-toggle" role="tablist">
-        <button type="button" id="btn-chart-view" class="active" aria-pressed="true">圖表</button>
-        <button type="button" id="btn-table-view" aria-pressed="false">表格</button>
+      <h2 class="card-title">區域資金流向</h2>
+      <div class="card-controls">
+        <span class="seg-label">觀察期間</span>
+        <div class="seg-toggle" id="region-weeks" role="tablist">
+          <button type="button" data-weeks="4" class="active">4 週</button>
+          <button type="button" data-weeks="8">8 週</button>
+          <button type="button" data-weeks="12">12 週</button>
+        </div>
+        <div class="seg-toggle" role="tablist">
+          <button type="button" id="btn-region-chart" class="active" aria-pressed="true">熱力圖</button>
+          <button type="button" id="btn-region-table" aria-pressed="false">表格</button>
+        </div>
       </div>
     </div>
-    <div class="flow-legend">
-      <span class="key"><span class="swatch swatch-in"></span>貨幣升值(資金流入傾向)</span>
-      <span class="key"><span class="swatch swatch-out"></span>貨幣貶值(資金流出傾向)</span>
-    </div>
-    <div id="region-chart" class="region-chart"></div>
+    <p class="card-desc">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標:藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。</p>
+    <p class="card-summary" id="region-summary"></p>
+    <div id="region-heatmap" class="heatmap-wrap"></div>
+    <div class="hm-legend" id="region-legend"></div>
     <div id="region-table" class="region-table" hidden></div>
   </section>
 
-  <!-- ===== TradingView 即時行情(補足無免費 API 的指標)===== -->
-  <section class="card">
-    <h2>即時行情參考(TradingView)</h2>
-    <p class="card-desc">美元指數 DXY、美債殖利率、VIX、各國股市為即時報價,由 TradingView 提供;上方判讀分數使用可程式化取得的資料計算,兩者可互相對照。</p>
+  <!-- ===== 美債長短天期趨勢 ===== -->
+  <section class="card" id="bond-card">
+    <div class="card-head">
+      <h2 class="card-title">美債長短天期趨勢</h2>
+    </div>
+    <p class="card-desc">2 年(短天期,反映升降息預期)、10 年與 30 年(長天期,反映增長/通膨與資金避險)殖利率曲線:比較今天、一週前與一月前,看資金是湧入還是撤出債市、曲線在變陡還是變平。</p>
+    <div class="bond-layout">
+      <div id="bond-chart"></div>
+      <div class="bond-stats" id="bond-stats"></div>
+    </div>
+    <p class="bond-read" id="bond-read"></p>
+  </section>
+
+  <!-- ===== TradingView 即時行情 ===== -->
+  <section class="card" id="tv-card">
+    <div class="card-head">
+      <h2 class="card-title">即時行情(TradingView)</h2>
+    </div>
+    <p class="card-desc">美元指數 DXY、美債殖利率、VIX、各國股市、能源與 AI 相關標的即時報價,由 TradingView 提供。</p>
     <div id="tv-widget" class="tv-widget"></div>
   </section>
 
   <footer class="page-footer">
     <p>資料來源:匯率 — <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter API</a>(歐洲央行,每個交易日更新一次)·
-    加密貨幣 — <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每 60 秒輪詢)·
+    加密貨幣與黃金(PAXG 代理)— <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每小時輪詢)·
     台股 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日盤後)·
-    原油/銅/綠能 — TradingView 報價(每 2 分鐘輪詢)·
-    即時行情 — TradingView widget。黃金以 PAXG(黃金代幣)價格作為代理。</p>
+    原油/銅/綠能/AI/美債殖利率 — TradingView 報價(每 2 分鐘輪詢)·
+    即時行情 — TradingView widget。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>
 
@@ -130,6 +121,7 @@
 <!-- 通用 tooltip(整頁共用一個) -->
 <div id="tooltip" class="tooltip" hidden></div>
 
+<script src="d3.v7.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
