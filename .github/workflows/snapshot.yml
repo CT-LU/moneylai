@@ -1,0 +1,31 @@
+# 每日行情快照:每個交易日美股收盤後抓一次 TradingView scanner 報價,
+# 累積到 data/history.json 並推回 main(Pages 隨之重新發佈)。
+# 前端把這份快照與瀏覽器本機的累積合併,熱力圖歷史不再綁定單一裝置。
+name: daily-snapshot
+
+on:
+  schedule:
+    - cron: '15 22 * * 1-5'   # UTC 22:15 = 美股收盤後(台灣時間 06:15)
+  workflow_dispatch: {}        # 允許手動觸發
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 抓報價並更新快照
+        run: python3 scripts/snapshot.py
+      - name: 提交快照
+        run: |
+          git config user.name "CT-LU"
+          git config user.email "11920416+CT-LU@users.noreply.github.com"
+          git add data/history.json
+          git diff --cached --quiet || git commit -m "每日行情快照"
+          git push

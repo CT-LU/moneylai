@@ -10,6 +10,8 @@
      即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣;
      日債 10 年殖利率(美日利差)、黃金現貨(銅金比)、HYG/LQD(信用風險胃納)
    - TWSE 三大法人買賣金額統計表 → 台股外資每日買賣超(熱錢進出台灣的直接觀測)
+   - data/history.json(GitHub Actions 每交易日快照)→ scanner 標的的每日收盤,
+     與本機 localStorage 累積合併,歷史不再綁定單一瀏覽器
    - BLS 官方 API → 非農就業、失業率;DBnomics(BEA 鏡像)→ 核心 PCE 物價指數
    - fawazahmed0 currency-api(jsDelivr / pages.dev 備援)→ 新台幣對美元、
      日圓、歐元、人民幣的歷史匯率(ECB 沒有 TWD)
@@ -48,7 +50,8 @@ const TWD_REGION = { sym: 'FX_IDC:USDTWD', name: '台灣', pair: 'USD/TWD' };
 const ALL_FX = [...new Set([...Object.keys(DXY_WEIGHTS), ...EM_BASKET, ...REGIONS.map(r => r.code)])];
 
 // TradingView scanner:資產流向用(即期價 + 近一週/近一月表現;
-// 更早的逐週資料靠 localStorage 跨日累積,初期會缺格)
+// 更早的逐週資料 = repo 每日快照 + localStorage 跨日累積,初期會缺格)。
+// 注意:SCANNER_ALL 的標的清單必須與 scripts/snapshot.py 保持同步
 const SCANNER_FLOWS = [
   { sym: 'NYMEX:CL1!',    ep: 'futures', name: '原油 WTI' },
   { sym: 'ICEEUR:BRN1!',  ep: 'futures', name: '原油 布蘭特' },
@@ -112,7 +115,8 @@ const TWDFX_KEY = 'moneylai-twdfx-history';
 // 台股外資買賣超(TWSE 三大法人買賣金額統計表 BFI82U):
 // 一次只回單日,歷史單日用 dayDate=YYYYMMDD 查(date 參數無效、type=month 只回整月合計);
 // 非交易日 stat != OK;當日資料收盤後(約 15:00 台灣時間)才發布
-const BFI_KEY = 'moneylai-bfi-history';
+// key 帶版本:v1 曾把 TWSE 限流回應(HTTP 200 + stat「線上人數過多」)誤存成休市,直接棄用
+const BFI_KEY = 'moneylai-bfi-history-v2';
 const FOREIGN_TRADING_DAYS = 20;   // 顯示近 20 個交易日
 
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
@@ -120,6 +124,7 @@ const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
 const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
 const MACRO_POLL_MS = 6 * 60 * 60 * 1000; // 總經是月資料,6 小時輪詢綽綽有餘
 const FOREIGN_POLL_MS = 60 * 60 * 1000;   // 外資買賣超一天更新一次,每小時輪詢即可
+const SNAP_POLL_MS = 6 * 60 * 60 * 1000;  // 每日快照(repo 靜態檔)一天更新一次
 
 const DAY_MS = 86400e3;
 
@@ -132,6 +137,7 @@ const state = {
   macro: null,      // { pce, nfp, unrate } 各為 [{ date:'YYYY-MM', value }]
   twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
   foreign: null,    // [{ date, net }] 台股外資買賣超(億元,升冪,僅交易日)
+  snapHist: null,   // { sym: { date: close } } repo 內每日快照(GitHub Actions 產出)
 };
 
 // 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序週(sortAgo=k 週前,0=本週)
@@ -297,7 +303,10 @@ function twDate(offsetDays) {
 }
 
 function loadBfiHist() {
-  try { return JSON.parse(localStorage.getItem(BFI_KEY)) || {}; }
+  try {
+    localStorage.removeItem('moneylai-bfi-history');   // 清掉可能被限流回應污染的舊版快取
+    return JSON.parse(localStorage.getItem(BFI_KEY)) || {};
+  }
   catch { return {}; }
 }
 
@@ -322,16 +331,22 @@ async function fetchBfiDay(iso) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`TWSE ${res.status}`);
   const json = await res.json();
-  if (json.stat !== 'OK' || !Array.isArray(json.data)) return null;
-  // 「外資及陸資(不含外資自營商)」+「外資自營商」;部分日期的格式只有單一「外資」列
-  let sum = 0, found = false;
-  for (const row of json.data) {
-    if (typeof row[0] === 'string' && row[0].startsWith('外資')) {
-      const v = Number(String(row[3]).replace(/,/g, ''));
-      if (Number.isFinite(v)) { sum += v; found = true; }
+  if (json.stat === 'OK' && Array.isArray(json.data)) {
+    // 「外資及陸資(不含外資自營商)」+「外資自營商」;部分日期的格式只有單一「外資」列
+    let sum = 0, found = false;
+    for (const row of json.data) {
+      if (typeof row[0] === 'string' && row[0].startsWith('外資')) {
+        const v = Number(String(row[3]).replace(/,/g, ''));
+        if (Number.isFinite(v)) { sum += v; found = true; }
+      }
     }
+    if (found) return Math.round(sum / 1e6) / 100;   // 元 → 億元
+    return null;
   }
-  return found ? Math.round(sum / 1e6) / 100 : null;   // 元 → 億元
+  // 只有「沒有符合條件的資料」才是確認的非交易日;
+  // 其他非 OK(如限流的「線上人數過多」,一樣回 HTTP 200)是暫時性錯誤,絕不可當休市快取
+  if (String(json.stat).includes('沒有符合條件')) return null;
+  throw new Error(`TWSE 暫時無法服務:${json.stat}`);
 }
 
 // 回補缺漏的交易日;部分失敗回傳第一個錯誤(顯示既有快取,下次輪詢再補)
@@ -347,7 +362,12 @@ async function fetchForeign() {
     if (hist[iso] !== undefined) continue;     // 已快取(含確認休市的 null)
     if (fetched > 0) await sleep(1100);        // TWSE 頻率限制:逐日間隔抓
     try {
-      const v = await fetchBfiDay(iso);
+      let v;
+      try { v = await fetchBfiDay(iso); }
+      catch {
+        await sleep(3000);                     // 暫時性錯誤(限流等):稍候重試一次
+        v = await fetchBfiDay(iso);
+      }
       fetched++;
       if (v !== null) hist[iso] = v;
       else if (iso !== today) hist[iso] = null; // 當日可能只是尚未發布,不快取
@@ -495,15 +515,37 @@ function recordScannerHistory() {
   catch { /* 隱私模式等寫入失敗,略過即可 */ }
 }
 
-// 把某 scanner 標的的累積紀錄整理成升冪日序列
+// 每日快照(repo 的 data/history.json,GitHub Actions 每交易日更新):
+// 讓 scanner 標的的逐週歷史不再綁定單一瀏覽器;首次部署前檔案可能不存在(404),失敗靜默略過
+async function fetchSnapHist() {
+  const res = await fetch(`data/history.json?d=${isoDate(new Date())}`);   // 相對路徑;以日期破快取
+  if (!res.ok) throw new Error(`快照 ${res.status}`);
+  state.snapHist = await res.json();
+}
+
+async function refreshSnapshot() {
+  try {
+    await fetchSnapHist();
+    renderAll();
+  } catch (e) {
+    console.warn('每日快照載入失敗(不影響其他資料):', e);
+  }
+}
+
+// 把某 scanner 標的的「每日快照 + 本機累積」合併成升冪日序列
 function scannerSeries(sym) {
   const h = loadScanHist()[sym];
   const q = state.scanner?.[sym];
   const map = new Map(Object.entries(h || {}));
-  // localStorage 寫入失敗時(隱私模式),至少用當下報價補三個點
+  // 快照是伺服端記錄的實際收盤,蓋過本機同日的反推估值
+  for (const [d, v] of Object.entries(state.snapHist?.[sym] || {})) {
+    if (Number.isFinite(v)) map.set(d, v);
+  }
+  // 即時報價是「今天」最新的觀測,一律蓋過快照/本機的當日值;
+  // 反推錨點只補缺(localStorage 寫入失敗的隱私模式也因此至少有三個點)
   if (q && Number.isFinite(q.close)) {
     const now = Date.now();
-    if (!map.size) map.set(isoDate(new Date(now)), q.close);
+    map.set(isoDate(new Date(now)), q.close);
     if (Number.isFinite(q.perfW)) {
       const d7 = isoDate(new Date(now - 7 * DAY_MS));
       if (!map.has(d7)) map.set(d7, q.close / (1 + q.perfW / 100));
@@ -1984,7 +2026,7 @@ async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
   refreshForeign();   // 不 await:首次回補逐日限速要跑數十秒,不佔住更新按鈕
-  await Promise.allSettled([refreshFX(), refreshScanner(), refreshMacro()]);
+  await Promise.allSettled([refreshSnapshot(), refreshFX(), refreshScanner(), refreshMacro()]);
   await refreshCryptoHistory();
   btn.disabled = false;
 }
@@ -2060,6 +2102,7 @@ function main() {
   setInterval(refreshCryptoHistory, HISTORY_POLL_MS);
   setInterval(refreshMacro, MACRO_POLL_MS);
   setInterval(refreshForeign, FOREIGN_POLL_MS);
+  setInterval(refreshSnapshot, SNAP_POLL_MS);
 }
 
 main();
