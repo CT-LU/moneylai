@@ -465,7 +465,9 @@ async function fetchEtfDaily() {
 }
 
 // TradingView scanner:一次 POST 拿多檔報價
-// (close、當日變化 %、近一週表現 %、近一月表現 %)
+// (close、當日變化 %、近一週表現 %、近一月表現 %、今日量比)
+// 量比 = 今日成交量 ÷ 近 10 日均量,無因次所以跨標的可比;
+// TVC 指數/外匯/現貨金沒有集中成交量,該欄回 null,屬正常
 async function fetchScanner() {
   const groups = {};
   for (const a of SCANNER_ALL) (groups[a.ep] ||= []).push(a.sym);
@@ -476,7 +478,7 @@ async function fetchScanner() {
       method: 'POST',
       body: JSON.stringify({
         symbols: { tickers, query: { types: [] } },
-        columns: ['close', 'change', 'Perf.W', 'Perf.1M'],
+        columns: ['close', 'change', 'Perf.W', 'Perf.1M', 'relative_volume_10d_calc'],
       }),
     });
     if (!res.ok) throw new Error(`scanner ${res.status}`);
@@ -484,7 +486,7 @@ async function fetchScanner() {
   }));
   const out = {};
   for (const item of lists.flat()) {
-    out[item.s] = { close: item.d[0], change: item.d[1], perfW: item.d[2], perf1M: item.d[3] };
+    out[item.s] = { close: item.d[0], change: item.d[1], perfW: item.d[2], perf1M: item.d[3], relVol: item.d[4] };
   }
   if (!Object.keys(out).length) throw new Error('scanner 無資料');
   state.scanner = out;
@@ -550,14 +552,22 @@ async function fetchCryptoHistory() {
       .then(r => { if (!r.ok) throw new Error(`CoinGecko ${r.status}`); return r.json(); })
   ));
   const hist = {};
+  const relVol = {};
   ids.forEach((id, i) => {
     const daily = new Map();   // 同一 UTC 日取最後一筆(最後一點是盤中即時值)
     for (const [ms, price] of lists[i].prices || []) {
       daily.set(new Date(ms).toISOString().slice(0, 10), price);
     }
     hist[id] = [...daily.entries()].map(([date, value]) => ({ date, value }));
+    // 量比:total_volumes 是滾動 24 小時量,最後一點 ÷ 前 10 個日點均量
+    const vols = (lists[i].total_volumes || []).map(v => v[1]).filter(Number.isFinite);
+    const last = vols[vols.length - 1];
+    const base = vols.slice(-11, -1);
+    relVol[id] = (base.length >= 5 && last > 0)
+      ? last / (base.reduce((s, v) => s + v, 0) / base.length) : null;
   });
   state.cryptoHist = hist;
+  state.cryptoRelVol = relVol;
 }
 
 // ===== scanner 資產的逐週歷史:localStorage 跨日累積 =====
@@ -746,12 +756,13 @@ function attachZ(rows) {
   }
 }
 
-// 資產列:name、src(資料源)、cells(每週漲跌)
+// 資產列:name、src(資料源)、cells(每週漲跌)、relVol(今日量比,無量能資料為 null)
+// relVol 欄位只有資產列有(區域卡是外匯,沒有集中成交量,整個欄位不存在)
 function assetRows(nWeeks) {
   const rows = [];
-  const add = (name, series, src) => {
+  const add = (name, series, src, relVol = null) => {
     if (!series || series.length < 2) return;
-    rows.push({ name, src, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
+    rows.push({ name, src, relVol, cells: weeklyChanges(series, nWeeks), sigma: weeklySigma12(series) });
   };
 
   if (state.fxRates) {
@@ -761,12 +772,15 @@ function assetRows(nWeeks) {
     add('新興市場貨幣籃', toSeries(state.fxDates, emIndexSeries()), 'ECB 匯率');
   }
   if (state.cryptoHist) {
-    add('黃金(PAXG)', state.cryptoHist['pax-gold'], 'CoinGecko');
-    add('比特幣', state.cryptoHist['bitcoin'], 'CoinGecko');
-    add('以太幣', state.cryptoHist['ethereum'], 'CoinGecko');
+    add('黃金(PAXG)', state.cryptoHist['pax-gold'], 'CoinGecko', state.cryptoRelVol?.['pax-gold']);
+    add('比特幣', state.cryptoHist['bitcoin'], 'CoinGecko', state.cryptoRelVol?.['bitcoin']);
+    add('以太幣', state.cryptoHist['ethereum'], 'CoinGecko', state.cryptoRelVol?.['ethereum']);
   }
   if (state.scanner) {
-    for (const a of SCANNER_FLOWS) add(a.name, scannerSeries(a.sym), 'TradingView');
+    for (const a of SCANNER_FLOWS) {
+      const rv = state.scanner[a.sym]?.relVol;
+      add(a.name, scannerSeries(a.sym), 'TradingView', Number.isFinite(rv) ? rv : null);
+    }
   }
 
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
@@ -808,10 +822,13 @@ function weekLabel(idx, nWeeks) {
   return idx === nWeeks - 1 ? '本週' : `-${nWeeks - 1 - idx}週`;
 }
 
+const REL_VOL_HIGH = 1.5;   // 今日量比 ≥1.5 = 放量(價格動作有量在背書)
+
 function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo, useZ) {
   const container = $(containerSel);
   if (!rows.length) { container.replaceChildren(); return; }
   const cellVal = (c) => (useZ ? c.z : c.pct) ?? null;   // 色階取值:原始 % 或標準化 σ
+  const hasVol = rows.some(r => 'relVol' in r);          // 只有資產卡的列帶量比欄位
 
   const width = Math.max(320, container.clientWidth || 800);
   const labelW = Math.min(132, Math.max(88, Math.round(width * 0.16)));
@@ -948,6 +965,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
 
     row.cells.forEach((cell, j) => {
       const v = cellVal(cell);
+      const isLatest = j === nWeeks - 1;
       const rect = g.append('rect')
         .attr('x', colX(j))
         .attr('y', 0)
@@ -958,16 +976,35 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
         .attr('stroke', ink)
         .attr('stroke-width', 1.4)
         .attr('cursor', 'pointer');
+      // 量比是「今日」的即時值,只標在本週格;tooltip 一律顯示數字避免誤讀
+      const volLines = (isLatest && 'relVol' in row) ? [{
+        text: Number.isFinite(row.relVol)
+          ? `今日量比 ${row.relVol.toFixed(2)}${row.relVol >= REL_VOL_HIGH ? '(放量)' : ''}`
+          : '今日量比 —(此標的無量能資料)',
+        cls: 'tt-label',
+      }] : [];
       rect.on('mouseenter mousemove', (ev) => {
         showTooltip([
           { text: `${row.name} · ${weekLabel(j, nWeeks)}`, cls: 'tt-label' },
           { text: `${cell.from} → ${cell.to}` , cls: 'tt-label' },
           { text: cell.pct === null ? '—(資料累積中)'
             : useZ ? `${fmtPct(cell.pct)}(${fmtZ(cell.z)})` : fmtPct(cell.pct), cls: 'tt-value' },
+          ...volLines,
           { text: '點擊:依此週排序', cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
       }).on('mouseleave', hideTooltip)
         .on('click', () => clickSort(nWeeks - 1 - j));
+      // 放量標記:本週格右上角小圓點(白底墨框,任何格色上都讀得到)
+      if (isLatest && Number.isFinite(row.relVol) && row.relVol >= REL_VOL_HIGH) {
+        g.append('circle')
+          .attr('cx', colX(j) + Math.max(2, cellW) - 7)
+          .attr('cy', 7)
+          .attr('r', 3.2)
+          .attr('fill', surface)
+          .attr('stroke', ink)
+          .attr('stroke-width', 1.4)
+          .attr('pointer-events', 'none');
+      }
     });
 
     // 最右:選中週的數字(pct 模式=漲跌 %、z 模式=σ)
@@ -1003,13 +1040,23 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
   swatch.append('rect').attr('x', 1).attr('y', 1).attr('width', 16).attr('height', 12)
     .attr('rx', 4).attr('fill', `url(#${patId}-leg)`).attr('stroke', ink).attr('stroke-width', 1.4);
 
-  legend.replaceChildren(
+  const legendParts = [
     el('span', '', useZ ? `−${maxAbs}σ(異常流出)` : `${fmtPct(-maxAbs, 1)}(流出)`),
     lsvg.node(),
     el('span', '', useZ ? `+${maxAbs}σ(異常流入)` : `${fmtPct(maxAbs, 1)}(流入)`),
     swatch.node(),
     el('span', '', '資料累積中'),
-  );
+  ];
+  if (hasVol) {
+    // 放量標記的圖例:一個色格 + 右上角小圓點,與熱力圖上的樣子一致
+    const volSwatch = d3.create('svg').attr('width', 18).attr('height', 14);
+    volSwatch.append('rect').attr('x', 1).attr('y', 1).attr('width', 16).attr('height', 12)
+      .attr('rx', 4).attr('fill', color(maxAbs / 2)).attr('stroke', ink).attr('stroke-width', 1.4);
+    volSwatch.append('circle').attr('cx', 12).attr('cy', 5).attr('r', 2.6)
+      .attr('fill', surface).attr('stroke', ink).attr('stroke-width', 1.2);
+    legendParts.push(volSwatch.node(), el('span', '', `今日放量(量比 ≥${REL_VOL_HIGH})`));
+  }
+  legend.replaceChildren(...legendParts);
 }
 
 // 表格檢視(熱力圖的無障礙等價版本)
