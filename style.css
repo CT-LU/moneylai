@@ -189,32 +189,33 @@ section { margin-bottom: 34px; }
 }
 .card-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .card-desc { color: var(--text-secondary); font-size: 13px; margin: 10px 0 12px; }
-/* 卡片說明預設折疊成「ⓘ 說明」小標,滑鼠移入展開浮層、移開收起;
-   無滑鼠的裝置(觸控)沒有 hover,維持全文直接顯示 */
-@media (hover: hover) {
-  .card-desc { position: relative; width: fit-content; cursor: help; }
-  .card-desc::before {
-    content: 'ⓘ 說明';
-    display: inline-block;
-    font-size: 12px; font-weight: 700;
-    color: var(--text-secondary);
-    border: 2px dashed var(--text-muted);
-    border-radius: 8px;
-    padding: 2px 10px;
-  }
-  .card-desc .desc-body {
-    display: none;
-    position: absolute; top: 100%; left: 0; z-index: 30;
-    width: min(640px, 84vw);
-    background: var(--surface-1);
-    border: 2.5px solid var(--ink);
-    border-radius: 10px;
-    box-shadow: 4px 4px 0 var(--ink);
-    padding: 10px 14px;
-  }
-  .card-desc:hover::before { background: var(--mem-yellow); color: #17141a; border-style: solid; border-color: var(--ink); }
-  .card-desc:hover .desc-body { display: block; }
+/* 卡片說明預設折疊成「ⓘ 說明」小標:滑鼠移入展開浮層、移開收起;
+   點擊切換 .open(觸控裝置沒有 hover,靠點擊開合,由 app.js 掛事件)。
+   不用 @media (hover) 偵測——部分觸控筆電/瀏覽器會誤報,一律折疊最穩 */
+.card-desc { position: relative; width: fit-content; cursor: help; }
+.card-desc::before {
+  content: 'ⓘ 說明';
+  display: inline-block;
+  font-size: 12px; font-weight: 700;
+  color: var(--text-secondary);
+  border: 2px dashed var(--text-muted);
+  border-radius: 8px;
+  padding: 2px 10px;
 }
+.card-desc .desc-body {
+  display: none;
+  position: absolute; top: 100%; left: 0; z-index: 30;
+  width: min(640px, 84vw);
+  background: var(--surface-1);
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  box-shadow: 4px 4px 0 var(--ink);
+  padding: 10px 14px;
+}
+.card-desc:hover::before,
+.card-desc.open::before { background: var(--mem-yellow); color: #17141a; border-style: solid; border-color: var(--ink); }
+.card-desc:hover .desc-body,
+.card-desc.open .desc-body { display: block; }
 
 /* 卡片標題 chip:每張卡不同 Memphis 色(--card-accent),永遠深字 */
 .card h2.card-title {

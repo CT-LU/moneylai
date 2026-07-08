@@ -2748,6 +2748,11 @@ function main() {
     { btn: '#btn-region-table', view: 'table', panels: ['#region-table'] },
   ], 'regionView', renderRegionCard);
 
+  // 卡片說明折疊:滑鼠 hover 走純 CSS,點擊切換 .open 供觸控裝置開合
+  for (const p of document.querySelectorAll('.card-desc')) {
+    p.addEventListener('click', () => p.classList.toggle('open'));
+  }
+
   // 視窗縮放:重畫(D3 圖以當下容器寬度繪製)
   let resizeTimer = null;
   window.addEventListener('resize', () => {
