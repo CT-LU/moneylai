@@ -155,10 +155,10 @@ const state = {
 };
 
 // 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序週(sortAgo=k 週前,0=本週)
-// 與色階(pct=原始漲跌 %、z=除以自身週波動度的標準化);台幣匯率卡的觀察週數
+// 與色階(pct=原始漲跌 %、z=除以自身週波動度的標準化;預設 z);台幣匯率卡的觀察週數
 const ui = {
-  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,  assetScale: 'pct',
-  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0, regionScale: 'pct',
+  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,  assetScale: 'z',
+  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0, regionScale: 'z',
   twdWeeks: 12,
 };
 
