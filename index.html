@@ -71,6 +71,32 @@
     <p class="card-footnote">資料來源:臺灣證券交易所「三大法人買賣金額統計表」(外資含外資自營商;僅上市集中市場,不含上櫃)。每個交易日收盤後更新一次;首次載入需逐日回補約一個月的資料,圖會逐步補齊。<span id="foreign-status"></span></p>
   </section>
 
+  <!-- ===== 中國資金流向(兩融 + 南向 + CNH−CNY + 國家隊觀測)===== -->
+  <section class="card" id="china-card">
+    <div class="card-head">
+      <h2 class="card-title">中國資金流向</h2>
+    </div>
+    <p class="card-desc">A 股的主力是內資,而且陸港通北向的每日淨買入自 2024 年 8 月起停止披露,無法像台股那樣直接看「外資買賣超」。這張卡改看四路訊號:兩融融資淨買入(內資槓桿情緒——主力在加碼還是撤退)、港股通南向淨買入(內地資金出海買港股,少數能直接觀測的資金外流)、離岸與在岸人民幣價差(CNH 比 CNY 貶得多=資金外流壓力),以及滬深 300 ETF 的分時價量——指數大跌時它突然放出巨量並把盤拉起,高機率是國家隊在護盤。</p>
+    <div class="macro-grid" id="china-stats"></div>
+    <h3 class="china-subtitle">國家隊觀測:滬深 300 ETF(510300)分時價量</h3>
+    <div id="china-etf" class="twd-chart"></div>
+    <div class="twd-legend" id="china-etf-legend"></div>
+    <p class="bond-read" id="china-etf-read"></p>
+    <div class="china-bars">
+      <div>
+        <h3 class="china-subtitle">兩融融資淨買入(內資槓桿)</h3>
+        <div id="china-margin-chart" class="twd-chart"></div>
+      </div>
+      <div>
+        <h3 class="china-subtitle">港股通南向淨買入(資金出海)</h3>
+        <div id="china-south-chart" class="twd-chart"></div>
+      </div>
+    </div>
+    <div class="twd-legend" id="china-legend"></div>
+    <p class="bond-read" id="china-read"></p>
+    <p class="card-footnote">資料來源:東方財富(非官方介面,可能不定期變動)。兩融為滬深兩市合計、於次一交易日早間更新;南向為港股通(滬+深)合計、當日港股收盤後更新;ETF 分時於 A 股盤中每 3 分鐘更新、收盤後顯示最近交易日全天。人民幣價差來自 TradingView 報價。<span id="china-status"></span></p>
+  </section>
+
   <!-- ===== 聯準會拔拔(美債殖利率曲線 + VIX + 通膨與就業)===== -->
   <section class="card" id="bond-card">
     <div class="card-head">
@@ -151,6 +177,7 @@
     加密貨幣與黃金(PAXG 代理)— <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每小時輪詢)·
     原油(WTI/布蘭特)/銅/綠能/AI/美債殖利率/VIX/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
     台股外資買賣超 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日收盤後)·
+    中國兩融/南向資金/滬深300 ETF — 東方財富(每交易日更新;ETF 分時盤中每 3 分鐘)·
     非農就業與失業率 — <a href="https://www.bls.gov/developers/" target="_blank" rel="noopener">美國勞工統計局 BLS</a> ·
     核心 PCE — BEA(經 <a href="https://db.nomics.world" target="_blank" rel="noopener">DBnomics</a>)·
     新台幣匯率 — <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">currency-api</a>(每日更新)。</p>

@@ -87,6 +87,10 @@ const GOLD_SYM  = 'TVC:GOLD';
 const HYG_SYM   = 'AMEX:HYG';
 const LQD_SYM   = 'AMEX:LQD';
 
+// 人民幣離岸/在岸(CNH−CNY 價差:離岸比在岸貶得多 = 資金外流壓力)
+const CNH_SYM = 'FX_IDC:USDCNH';
+const CNY_SYM = 'FX_IDC:USDCNY';
+
 const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
@@ -96,6 +100,8 @@ const SCANNER_ALL = [
   { sym: GOLD_SYM,  ep: 'global', name: '黃金現貨' },
   { sym: HYG_SYM,   ep: 'global', name: '高收益債 HYG' },
   { sym: LQD_SYM,   ep: 'global', name: '投資級債 LQD' },
+  { sym: CNH_SYM,   ep: 'global', name: '美元兌離岸人民幣' },
+  { sym: CNY_SYM,   ep: 'global', name: '美元兌在岸人民幣' },
 ];
 
 // 總經月資料(聯準會雙重使命:物價 + 就業)
@@ -125,6 +131,8 @@ const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
 const MACRO_POLL_MS = 6 * 60 * 60 * 1000; // 總經是月資料,6 小時輪詢綽綽有餘
 const FOREIGN_POLL_MS = 60 * 60 * 1000;   // 外資買賣超一天更新一次,每小時輪詢即可
 const SNAP_POLL_MS = 6 * 60 * 60 * 1000;  // 每日快照(repo 靜態檔)一天更新一次
+const CHINA_POLL_MS = 60 * 60 * 1000;     // 兩融/南向/日K 皆為日資料,每小時輪詢即可
+const ETF_POLL_MS = 3 * 60 * 1000;        // 510300 分時:A 股盤中每 3 分鐘(收盤後不打)
 
 const DAY_MS = 86400e3;
 
@@ -138,6 +146,12 @@ const state = {
   twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
   foreign: null,    // [{ date, net }] 台股外資買賣超(億元,升冪,僅交易日)
   snapHist: null,   // { sym: { date: close } } repo 內每日快照(GitHub Actions 產出)
+  china: {          // 中國資金流向(東方財富):
+    margin: null,   //   [{ date, net, balance }] 兩融融資淨買入/餘額(億元,升冪)
+    south: null,    //   [{ date, net }] 港股通南向淨買入(億港元,升冪)
+    etf: null,      //   { date, preClose, points: [{ time, price, vol }] } 510300 分時
+    etfDaily: null, //   [{ date, vol }] 510300 日成交量(算量比用)
+  },
 };
 
 // 介面狀態:兩張熱力圖各自的觀察週數、檢視模式、排序週(sortAgo=k 週前,0=本週)
@@ -378,6 +392,76 @@ async function fetchForeign() {
   }
   if (firstErr && !state.foreign?.length) throw firstErr;
   return firstErr;
+}
+
+// ===== 中國資金流向(東方財富:兩融 + 南向 + 滬深300 ETF)=====
+// A 股主力是內資,且陸港通北向的每日淨買入自 2024-08-18 起停止披露
+//(MUTUAL_TYPE 001/003/005 的買賣與淨買欄位全為 null),無法直接觀測外資。
+// 改看:兩融融資淨買入(內資槓桿情緒)、港股通南向淨買入(內地資金出海)、
+// CNH−CNY 價差(資金外流壓力,走 scanner)、510300 分時價量(國家隊護盤跡象)。
+// 東方財富為非官方介面:各端點獨立抓,單一失敗只缺對應區塊。
+
+async function fetchEmRows(params) {
+  const res = await fetch(`https://datacenter-web.eastmoney.com/api/data/v1/get?${params}`);
+  if (!res.ok) throw new Error(`東方財富 ${res.status}`);
+  const rows = (await res.json()).result?.data;
+  if (!Array.isArray(rows) || !rows.length) throw new Error('東方財富無資料');
+  return rows;
+}
+
+// 兩融(滬深合計):融資淨買額 = 內資槓桿的日頻風險偏好;融資餘額 = 槓桿水位
+async function fetchChinaMargin() {
+  const rows = await fetchEmRows(
+    'reportName=RPTA_RZRQ_LSHJ&columns=ALL&source=WEB&sortColumns=DIM_DATE&sortTypes=-1&pageNumber=1&pageSize=40');
+  state.china.margin = rows
+    .map(r => ({
+      date: String(r.DIM_DATE).slice(0, 10),
+      net: r.RZJME / 1e8,        // 元 → 億元
+      balance: r.RZYE / 1e8,     // 元 → 億元(顯示時再換兆)
+    }))
+    .filter(r => Number.isFinite(r.net) && Number.isFinite(r.balance))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-FOREIGN_TRADING_DAYS);
+}
+
+// 港股通南向合計(MUTUAL_TYPE=006):內地資金南下買港股的每日淨買入
+async function fetchChinaSouth() {
+  const rows = await fetchEmRows(
+    'reportName=RPT_MUTUAL_DEAL_HISTORY&columns=ALL&source=WEB&sortColumns=TRADE_DATE&sortTypes=-1' +
+    '&pageNumber=1&pageSize=40&filter=(MUTUAL_TYPE%3D%22006%22)');
+  state.china.south = rows
+    .map(r => ({ date: String(r.TRADE_DATE).slice(0, 10), net: r.NET_DEAL_AMT / 100 }))  // 百萬港元 → 億港元
+    .filter(r => Number.isFinite(r.net))
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-FOREIGN_TRADING_DAYS);
+}
+
+// 滬深300 ETF(510300,國家隊護盤主要工具)分時:1 分鐘價量;
+// 非交易時段回最近交易日的全天 241 點
+async function fetchEtfTrends() {
+  const res = await fetch('https://push2his.eastmoney.com/api/qt/stock/trends2/get' +
+    '?secid=1.510300&fields1=f1,f2,f3,f7,f8&fields2=f51,f53,f56,f58&iscr=0&ndays=1');
+  if (!res.ok) throw new Error(`東方財富分時 ${res.status}`);
+  const d = (await res.json()).data;
+  if (!d || !Array.isArray(d.trends) || d.trends.length < 2) throw new Error('分時無資料');
+  const points = d.trends.map(s => {
+    const [dt, price, vol] = s.split(',');
+    return { time: dt.slice(11, 16), price: Number(price), vol: Number(vol) };
+  }).filter(p => Number.isFinite(p.price) && Number.isFinite(p.vol));
+  if (points.length < 2) throw new Error('分時無資料');
+  state.china.etf = { date: d.trends[0].slice(0, 10), preClose: d.preClose, points };
+}
+
+// 510300 日 K(只取成交量,單位「手」與分時一致):供量比 = 當日量 ÷ 20 日均量
+async function fetchEtfDaily() {
+  const res = await fetch('https://push2his.eastmoney.com/api/qt/stock/kline/get' +
+    '?secid=1.510300&klt=101&fqt=1&lmt=25&end=20500101&fields1=f1,f2,f3&fields2=f51,f52,f53,f54,f55,f56,f57');
+  if (!res.ok) throw new Error(`東方財富日K ${res.status}`);
+  const d = (await res.json()).data;
+  if (!d || !Array.isArray(d.klines) || !d.klines.length) throw new Error('日K無資料');
+  state.china.etfDaily = d.klines
+    .map(s => { const f = s.split(','); return { date: f[0], vol: Number(f[5]) }; })
+    .filter(r => Number.isFinite(r.vol));
 }
 
 // TradingView scanner:一次 POST 拿多檔報價
@@ -1773,11 +1857,13 @@ function renderForeignStats(rows) {
   }));
 }
 
-// 每日買賣超長條圖:藍=買超(流入)、紅=賣超(流出),與熱力圖同一組 diverging 資料色
-function renderForeignChart(rows) {
-  const container = $('#foreign-chart');
-  const width = Math.max(320, container.clientWidth || 640);
-  const height = 190;
+// 每日淨額長條圖(台股外資、中國兩融與南向共用):
+// 藍=淨買入(流入)、紅=淨賣出(流出),與熱力圖同一組 diverging 資料色
+// opts:{ unitLabel, tooltipText(r), height?, minAbs? }
+function renderNetBarChart(containerSel, rows, opts) {
+  const container = $(containerSel);
+  const width = Math.max(280, container.clientWidth || 640);
+  const height = opts.height ?? 190;
   const m = { top: 18, right: 12, bottom: 24, left: 56 };
 
   const ink = cssVar('--ink');
@@ -1791,7 +1877,7 @@ function renderForeignChart(rows) {
     .domain(rows.map(r => r.date))
     .range([m.left, width - m.right])
     .paddingInner(0.3).paddingOuter(0.1);
-  const maxAbs = Math.max(50, d3.max(rows, r => Math.abs(r.net)));
+  const maxAbs = Math.max(opts.minAbs ?? 50, d3.max(rows, r => Math.abs(r.net)));
   const y = d3.scaleLinear()
     .domain([-maxAbs * 1.15, maxAbs * 1.15])
     .range([height - m.bottom, m.top]);
@@ -1812,7 +1898,7 @@ function renderForeignChart(rows) {
   svg.append('text')
     .attr('x', m.left - 6).attr('y', m.top - 6)
     .attr('text-anchor', 'end').attr('font-size', 9.5).attr('fill', cMuted)
-    .text('億元');
+    .text(opts.unitLabel ?? '億元');
   // 零線(基準線,比網格線重)
   svg.append('line')
     .attr('x1', m.left).attr('x2', width - m.right)
@@ -1843,7 +1929,7 @@ function renderForeignChart(rows) {
       .on('mouseenter mousemove', (ev) => {
         showTooltip([
           { text: r.date, cls: 'tt-label' },
-          { text: `外資${pos ? '買超' : '賣超'} ${Math.abs(r.net).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 億`, cls: 'tt-value' },
+          { text: opts.tooltipText(r), cls: 'tt-value' },
         ], ev.clientX, ev.clientY);
       })
       .on('mouseleave', hideTooltip);
@@ -1861,6 +1947,14 @@ function renderForeignChart(rows) {
     .text(fmtNetBillions(last.net).replace(' 億', ''));
 
   container.replaceChildren(svg.node());
+}
+
+// 台股外資每日買賣超長條
+function renderForeignChart(rows) {
+  renderNetBarChart('#foreign-chart', rows, {
+    unitLabel: '億元',
+    tooltipText: (r) => `外資${r.net >= 0 ? '買超' : '賣超'} ${Math.abs(r.net).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 億`,
+  });
 }
 
 function renderForeignLegend() {
@@ -1929,11 +2023,344 @@ function renderForeignCard() {
   renderForeignRead(rows);
 }
 
+// ===== 中國資金流向卡 =====
+
+// CNH−CNY 價差(%):正 = 離岸較弱 = 資金外流壓力;dW = 一週變化(由 Perf.W 反推)
+function cnhCnySpread() {
+  const h = state.scanner?.[CNH_SYM];
+  const n = state.scanner?.[CNY_SYM];
+  if (!Number.isFinite(h?.close) || !Number.isFinite(n?.close)) return null;
+  const now = (h.close / n.close - 1) * 100;
+  const dW = (Number.isFinite(h.perfW) && Number.isFinite(n.perfW))
+    ? now - ((h.close / (1 + h.perfW / 100)) / (n.close / (1 + n.perfW / 100)) - 1) * 100
+    : null;
+  return { now, dW };
+}
+
+// 量比:當日累計量 ÷ 20 日均量(盤中按已開盤分鐘數比例折算,收盤後即全日對全日)
+function etfVolumeRatio() {
+  const etf = state.china.etf;
+  const daily = state.china.etfDaily;
+  if (!etf || !daily) return null;
+  const past = daily.filter(d => d.date !== etf.date).slice(-20);
+  if (past.length < 5) return null;
+  const avg = past.reduce((s, d) => s + d.vol, 0) / past.length;
+  const todayVol = etf.points.reduce((s, p) => s + p.vol, 0);
+  const expected = avg * Math.min(1, etf.points.length / 241);   // 全天分時共 241 點
+  return expected > 0 ? todayVol / expected : null;
+}
+
+// 卡頭四個數字盒:融資餘額、融資淨買入、南向淨買入、CNH−CNY 價差
+//(方向用文字標示不用紅綠,與台股外資卡同一原則)
+function renderChinaStats() {
+  const grid = $('#china-stats');
+  const boxes = [];
+  const mkBox = (label, value, deltaText) => {
+    const box = el('div', 'macro-box');
+    const head = el('div', 'macro-head');
+    head.appendChild(el('span', 'label', label));
+    head.appendChild(el('span', 'value', value));
+    head.appendChild(el('span', 'delta flat', deltaText));
+    box.appendChild(head);
+    return box;
+  };
+
+  const mg = state.china.margin;
+  if (mg?.length) {
+    const latest = mg[mg.length - 1];
+    const prev = mg[mg.length - 2];
+    const dBal = prev ? latest.balance - prev.balance : null;
+    boxes.push(mkBox(`融資餘額(${latest.date.slice(5)})`,
+      `${(latest.balance / 1e4).toFixed(2)} 兆元`,
+      dBal === null ? '—'
+        : `${fmtNetBillions(dBal)} /日(${Math.abs(dBal) < 10 ? '持平' : dBal > 0 ? '加槓桿' : '去槓桿'})`));
+    const sum5 = mg.slice(-5).reduce((s, r) => s + r.net, 0);
+    boxes.push(mkBox(`融資淨買入(${latest.date.slice(5)})`,
+      fmtNetBillions(latest.net),
+      `近 5 日累計 ${fmtNetBillions(sum5)}`));
+  }
+
+  const so = state.china.south;
+  if (so?.length) {
+    const latest = so[so.length - 1];
+    const sum5 = so.slice(-5).reduce((s, r) => s + r.net, 0);
+    boxes.push(mkBox(`南向淨買入(${latest.date.slice(5)})`,
+      `${fmtNetBillions(latest.net)}港元`,
+      `近 5 日累計 ${fmtNetBillions(sum5)}港元`));
+  }
+
+  const sp = cnhCnySpread();
+  if (sp) {
+    const word = sp.now > 0.15 ? '外流壓力' : sp.now < -0.15 ? '偏流入' : '壓力有限';
+    boxes.push(mkBox('CNH−CNY 價差', fmtPct(sp.now, 2),
+      sp.dW === null ? `離岸${word}`
+        : `週${sp.dW > 0 ? '+' : ''}${sp.dW.toFixed(2)} 百分點(${word})`));
+  }
+
+  if (boxes.length) grid.replaceChildren(...boxes);
+}
+
+// 510300 分時價量圖:上=價格線(昨收虛線參考),下=量能長條;
+// 放量分鐘(> 3 × 當日中位)染藍——大跌時放巨量拉回 = 疑似國家隊護盤
+function renderChinaEtf() {
+  const etf = state.china.etf;
+  const container = $('#china-etf');
+  const width = Math.max(320, container.clientWidth || 640);
+  const height = 240;
+  const m = { top: 20, right: 14, bottom: 22, left: 50 };
+  const volH = 54;                                  // 量能區高度
+  const priceB = height - m.bottom - volH - 10;     // 價格區底
+
+  const ink = cssVar('--ink');
+  const cGrid = cssVar('--grid');
+  const cMuted = cssVar('--text-muted');
+  const cText = cssVar('--text-primary');
+  const cIn = cssVar('--series-in');
+
+  const pts = etf.points;
+  const x = d3.scaleLinear().domain([0, Math.max(240, pts.length - 1)]).range([m.left, width - m.right]);
+  const prices = pts.map(p => p.price).concat([etf.preClose]).filter(Number.isFinite);
+  const span = d3.max(prices) - d3.min(prices) || etf.preClose * 0.002 || 0.01;
+  const y = d3.scaleLinear()
+    .domain([d3.min(prices) - span * 0.12, d3.max(prices) + span * 0.12])
+    .range([priceB, m.top]).nice();
+  const maxVol = d3.max(pts, p => p.vol) || 1;
+  const yv = d3.scaleLinear().domain([0, maxVol]).range([height - m.bottom, height - m.bottom - volH]);
+
+  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+
+  // 價格區:退位網格 + 刻度
+  for (const t of y.ticks(4)) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(t)).attr('y2', y(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 6).attr('y', y(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .text(t.toFixed(3));
+  }
+
+  // 昨收虛線參考
+  if (Number.isFinite(etf.preClose)) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', y(etf.preClose)).attr('y2', y(etf.preClose))
+      .attr('stroke', cMuted).attr('stroke-width', 1.5).attr('stroke-dasharray', '5 4');
+    svg.append('text')
+      .attr('x', m.left + 2).attr('y', y(etf.preClose) - 4)
+      .attr('font-size', 9.5).attr('fill', cMuted)
+      .text(`昨收 ${etf.preClose.toFixed(3)}`);
+  }
+
+  // x 軸時間錨點(中午休市 11:30/13:00 相鄰,合標一次)
+  const anchors = { '09:30': '09:30', '10:30': '10:30', '11:30': '11:30/13:00', '14:00': '14:00', '15:00': '15:00' };
+  pts.forEach((p, i) => {
+    const lab = anchors[p.time];
+    if (!lab) return;
+    svg.append('text')
+      .attr('x', x(i)).attr('y', height - 6)
+      .attr('text-anchor', i === 0 ? 'start' : 'middle')
+      .attr('font-size', 10).attr('fill', cMuted)
+      .text(lab);
+  });
+
+  // 量能長條:一般=中性灰,放量(> 3 × 當日中位)=藍
+  const sortedVol = pts.map(p => p.vol).filter(v => v > 0).sort((a, b) => a - b);
+  const medVol = sortedVol.length ? sortedVol[Math.floor(sortedVol.length / 2)] : 0;
+  const isSpike = (v) => medVol > 0 && v > 3 * medVol;
+  const bw = Math.max(1, (width - m.left - m.right) / Math.max(240, pts.length) - 0.5);
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (!(p.vol > 0)) continue;
+    svg.append('rect')
+      .attr('x', x(i) - bw / 2).attr('y', yv(p.vol))
+      .attr('width', bw).attr('height', Math.max(0.5, yv(0) - yv(p.vol)))
+      .attr('fill', isSpike(p.vol) ? cIn : cMuted)
+      .attr('opacity', isSpike(p.vol) ? 1 : 0.55);
+  }
+
+  // 價格線(墨色,與迷你趨勢同語彙)
+  const line = d3.line().x((p, i) => x(i)).y(p => y(p.price));
+  svg.append('path')
+    .attr('d', line(pts))
+    .attr('fill', 'none')
+    .attr('stroke', ink)
+    .attr('stroke-width', 2.2)
+    .attr('stroke-linecap', 'round')
+    .attr('stroke-linejoin', 'round');
+
+  // 右上角:日期 + 最新價與相對昨收
+  const last = pts[pts.length - 1];
+  const chg = Number.isFinite(etf.preClose) ? pctChange(etf.preClose, last.price) : null;
+  svg.append('text')
+    .attr('x', width - m.right).attr('y', m.top - 7)
+    .attr('text-anchor', 'end').attr('font-size', 10.5).attr('font-weight', 700).attr('fill', cText)
+    .text(`${etf.date} 最新 ${last.price.toFixed(3)}${chg === null ? '' : `(${fmtPct(chg)})`}`);
+
+  // hover 十字線:時間 / 價 / 量
+  const hover = svg.append('g').style('display', 'none');
+  hover.append('line')
+    .attr('y1', m.top).attr('y2', height - m.bottom)
+    .attr('stroke', cMuted).attr('stroke-width', 1).attr('stroke-dasharray', '3 3');
+  svg.append('rect')
+    .attr('x', m.left).attr('y', m.top)
+    .attr('width', width - m.left - m.right).attr('height', height - m.top - m.bottom)
+    .attr('fill', 'transparent')
+    .on('mousemove', (ev) => {
+      const [mx] = d3.pointer(ev);
+      const i = Math.max(0, Math.min(pts.length - 1, Math.round(x.invert(mx))));
+      const p = pts[i];
+      hover.style('display', null).select('line').attr('x1', x(i)).attr('x2', x(i));
+      const pc = Number.isFinite(etf.preClose) ? `(較昨收 ${fmtPct(pctChange(etf.preClose, p.price))})` : '';
+      showTooltip([
+        { text: `${etf.date} ${p.time}`, cls: 'tt-label' },
+        { text: `${p.price.toFixed(3)} ${pc}`, cls: 'tt-value' },
+        { text: `量 ${(p.vol / 1e4).toFixed(1)} 萬手${isSpike(p.vol) ? '(異常放量)' : ''}`, cls: 'tt-value' },
+      ], ev.clientX, ev.clientY);
+    })
+    .on('mouseleave', () => { hover.style('display', 'none'); hideTooltip(); });
+
+  container.replaceChildren(svg.node());
+}
+
+function renderChinaEtfLegend() {
+  const box = $('#china-etf-legend');
+  const mk = (color, text) => {
+    const chip = el('span', 'twd-chip');
+    const sw = el('span', 'twd-swatch');
+    sw.style.background = color;
+    chip.appendChild(sw);
+    chip.appendChild(document.createTextNode(text));
+    return chip;
+  };
+  box.replaceChildren(
+    mk(cssVar('--text-muted'), '一般量能'),
+    mk(cssVar('--series-in'), '異常放量(> 3 倍當日中位)'),
+  );
+}
+
+// 國家隊護盤判讀:大跌(盤中低點 ≤ −1%)+ 放量(量比 ≥ 1.8)+ 自低點拉回 ≥ 0.8%
+function renderChinaEtfRead() {
+  const p = $('#china-etf-read');
+  const etf = state.china.etf;
+  if (!etf || etf.points.length < 5) { p.textContent = ''; return; }
+  const prices = etf.points.map(q => q.price);
+  const last = prices[prices.length - 1];
+  const low = d3.min(prices);
+  const dipPct = Number.isFinite(etf.preClose) ? pctChange(etf.preClose, low) : null;
+  const reboundPct = pctChange(low, last);
+  const ratio = etfVolumeRatio();
+
+  const nums = `盤中最低 ${dipPct === null ? '—' : fmtPct(dipPct)}、自低點回升 ${fmtPct(reboundPct)}` +
+    (ratio === null ? '' : `、量比(相對 20 日均量)${ratio.toFixed(1)}`);
+  let verdict;
+  if (dipPct !== null && dipPct <= -1 && reboundPct >= 0.8 && ratio !== null && ratio >= 1.8) {
+    verdict = '大跌中放出巨量並自低點明顯拉回——高機率是國家隊進場護盤。';
+  } else if (dipPct !== null && dipPct <= -1 && ratio !== null && ratio >= 1.5) {
+    verdict = '放量下跌、尚未見護盤式拉回,留意後續量價。';
+  } else if (ratio !== null && ratio < 0.8) {
+    verdict = '量能清淡,多空都不積極,無護盤跡象。';
+  } else {
+    verdict = '量能與走勢正常,無護盤跡象。';
+  }
+  p.replaceChildren(el('span', 'bond-tag', '國家隊'), document.createTextNode(`${nums}。${verdict}`));
+}
+
+function renderChinaLegend() {
+  const box = $('#china-legend');
+  const mk = (color, text) => {
+    const chip = el('span', 'twd-chip');
+    const sw = el('span', 'twd-swatch');
+    sw.style.background = color;
+    chip.appendChild(sw);
+    chip.appendChild(document.createTextNode(text));
+    return chip;
+  };
+  box.replaceChildren(
+    mk(cssVar('--series-in'), '淨買入=資金投入'),
+    mk(cssVar('--series-out'), '淨賣出=資金撤出'),
+  );
+}
+
+// 三路合讀:槓桿端(兩融)× 出海端(南向)× 匯率端(CNH−CNY)
+function renderChinaRead() {
+  const p = $('#china-read');
+  const parts = [];
+  const mg = state.china.margin;
+  const so = state.china.south;
+  let mgSum = null, soSum = null;
+
+  if (mg && mg.length >= 5) {
+    mgSum = mg.slice(-5).reduce((s, r) => s + r.net, 0);
+    const v = mgSum > 150 ? '內資加槓桿進場,境內風險偏好升溫'
+      : mgSum < -150 ? '內資去槓桿,境內風險偏好收縮' : '內資槓桿變動有限';
+    parts.push(`槓桿端:融資近 5 日累計${mgSum >= 0 ? '淨買入' : '淨賣出'} ` +
+      `${Math.abs(Math.round(mgSum)).toLocaleString('zh-TW')} 億元,${v}。`);
+  }
+  if (so && so.length >= 5) {
+    soSum = so.slice(-5).reduce((s, r) => s + r.net, 0);
+    const v = soSum > 200 ? '內地資金大舉南下買港股'
+      : soSum < -200 ? '南向資金回流境內' : '南向進出有限';
+    parts.push(`出海端:南向近 5 日累計${soSum >= 0 ? '淨買入' : '淨賣出'} ` +
+      `${Math.abs(Math.round(soSum)).toLocaleString('zh-TW')} 億港元,${v}。`);
+  }
+  const sp = cnhCnySpread();
+  if (sp) {
+    const v = sp.now > 0.15 ? '離岸較在岸明顯偏貶,匯率端存在資金外流壓力'
+      : sp.now < -0.15 ? '離岸較在岸偏升,外流壓力不明顯' : '離岸與在岸大致貼合,匯率端壓力有限';
+    parts.push(`匯率端:CNH−CNY 價差 ${fmtPct(sp.now, 2)},${v}。`);
+  }
+
+  // 合讀:訊號同向才下結論
+  let combo = '';
+  if (soSum !== null && sp && soSum > 200 && sp.now > 0.15) {
+    combo = ' 南向大買與離岸偏貶同向——中國資金外流的訊號獲得雙重確認。';
+  } else if (mgSum !== null && mgSum > 150 && soSum !== null && Math.abs(soSum) <= 200) {
+    combo = ' 內資加槓桿而南向平淡,資金的風險偏好留在境內市場。';
+  } else if (mgSum !== null && mgSum < -150 && soSum !== null && soSum > 200) {
+    combo = ' 境內去槓桿疊加資金南下,留意 A 股的資金面壓力。';
+  }
+
+  if (!parts.length) { p.textContent = ''; return; }
+  p.replaceChildren(el('span', 'bond-tag', '三路合讀'), document.createTextNode(parts.join(' ') + combo));
+}
+
+function renderChinaCard() {
+  const { margin, south, etf } = state.china;
+  if (!margin?.length && !south?.length && !etf) return;   // 全缺:保留前一次渲染
+  renderChinaStats();
+  if (etf) {
+    renderChinaEtf();
+    renderChinaEtfLegend();
+    renderChinaEtfRead();
+  }
+  if (margin?.length) {
+    renderNetBarChart('#china-margin-chart', margin, {
+      unitLabel: '億元',
+      height: 180,
+      minAbs: 100,
+      tooltipText: (r) => `融資${r.net >= 0 ? '淨買入' : '淨賣出'} ${Math.abs(r.net).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 億元`,
+    });
+  }
+  if (south?.length) {
+    renderNetBarChart('#china-south-chart', south, {
+      unitLabel: '億港元',
+      height: 180,
+      minAbs: 100,
+      tooltipText: (r) => `南向${r.net >= 0 ? '淨買入' : '淨賣出'} ${Math.abs(r.net).toLocaleString('zh-TW', { maximumFractionDigits: 1 })} 億港元`,
+    });
+  }
+  if (margin?.length || south?.length) renderChinaLegend();
+  renderChinaRead();
+}
+
 // ===== 更新流程 =====
 
 function renderAll() {
   renderTwdCard();
   renderForeignCard();
+  renderChinaCard();
   renderAssetCard();
   renderRegionCard();
   renderBondCard();
@@ -2001,6 +2428,40 @@ async function refreshForeign() {
   }
 }
 
+// 中國資金流向:四個端點獨立抓,狀態標在卡的註腳(東方財富波動不佔頁首狀態燈)
+let chinaBusy = false;
+
+async function refreshChina() {
+  if (chinaBusy) return;
+  chinaBusy = true;
+  const status = $('#china-status');
+  const t = () => new Date().toLocaleTimeString('zh-TW', { hour12: false });
+  const results = await Promise.allSettled([
+    fetchChinaMargin(), fetchChinaSouth(), fetchEtfDaily(), fetchEtfTrends(),
+  ]);
+  const nFail = results.filter(r => r.status === 'rejected').length;
+  for (const r of results) {
+    if (r.status === 'rejected') console.error('中國資金流向更新失敗:', r.reason);
+  }
+  status.textContent = nFail === 0 ? ` 更新於 ${t()}。`
+    : nFail === results.length ? ' ⚠ 更新失敗,顯示上次內容。'
+    : ` ⚠ 部分資料抓取失敗(${t()})`;
+  chinaBusy = false;
+  renderChinaCard();
+}
+
+// A 股盤中(UTC+8 週一至五 09:25–15:05)才刷新分時;收盤後資料不會變,不再打
+async function refreshEtfIntraday() {
+  const d = new Date(Date.now() + 8 * 3600e3);
+  const hm = d.getUTCHours() * 100 + d.getUTCMinutes();
+  const dow = d.getUTCDay();
+  if (dow === 0 || dow === 6 || hm < 925 || hm > 1505) return;
+  try {
+    await fetchEtfTrends();
+    renderChinaCard();
+  } catch (e) { console.warn('510300 分時更新失敗(下次輪詢再試):', e); }
+}
+
 let historyRetryTimer = null;
 
 async function refreshCryptoHistory() {
@@ -2026,6 +2487,7 @@ async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
   refreshForeign();   // 不 await:首次回補逐日限速要跑數十秒,不佔住更新按鈕
+  refreshChina();     // 不 await:與其他來源獨立,失敗只影響自己的卡
   await Promise.allSettled([refreshSnapshot(), refreshFX(), refreshScanner(), refreshMacro()]);
   await refreshCryptoHistory();
   btn.disabled = false;
@@ -2103,6 +2565,8 @@ function main() {
   setInterval(refreshMacro, MACRO_POLL_MS);
   setInterval(refreshForeign, FOREIGN_POLL_MS);
   setInterval(refreshSnapshot, SNAP_POLL_MS);
+  setInterval(refreshChina, CHINA_POLL_MS);
+  setInterval(refreshEtfIntraday, ETF_POLL_MS);
 }
 
 main();

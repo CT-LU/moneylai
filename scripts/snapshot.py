@@ -32,6 +32,8 @@ GLOBAL = [
     'TVC:GOLD',        # 黃金現貨(銅金比)
     'AMEX:HYG',        # 高收益債
     'AMEX:LQD',        # 投資級債
+    'FX_IDC:USDCNH',   # 美元兌離岸人民幣(CNH−CNY 價差)
+    'FX_IDC:USDCNY',   # 美元兌在岸人民幣
 ]
 FUTURES = ['NYMEX:CL1!', 'ICEEUR:BRN1!']   # 原油 WTI / 布蘭特
 COLS = ['close', 'Perf.W', 'Perf.1M', 'Perf.3M']

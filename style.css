@@ -203,6 +203,7 @@ section { margin-bottom: 34px; }
 }
 #twd-card     { --card-accent: var(--mem-cyan); }
 #foreign-card { --card-accent: #c9b3ff; }   /* 淺紫(裝飾色,非資料色) */
+#china-card   { --card-accent: #ffb3a0; }   /* 淺橘紅(裝飾色,非資料色) */
 #asset-card  { --card-accent: var(--mem-yellow); }
 #region-card { --card-accent: #3fd1d1; }
 #bond-card   { --card-accent: var(--mem-pink); }
@@ -354,6 +355,21 @@ section { margin-bottom: 34px; }
 }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
 .twd-box .twd-swatch { width: 10px; height: 10px; }
+
+/* 中國資金流向卡:分時圖小標 + 兩張長條圖並排(窄幅堆疊) */
+.china-subtitle {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin: 18px 0 0;
+}
+.china-bars {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 20px;
+  margin-top: 4px;
+}
+@media (max-width: 760px) { .china-bars { grid-template-columns: 1fr; } }
 
 .bond-read { font-size: 13.5px; color: var(--text-secondary); margin: 14px 0 0; }
 .bond-read .bond-tag {
