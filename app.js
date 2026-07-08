@@ -114,10 +114,10 @@ const state = {
   twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
 };
 
-// 介面狀態:兩張熱力圖各自的觀察週數與檢視模式;台幣匯率卡的觀察週數
+// 介面狀態:兩張熱力圖各自的觀察週數、檢視模式與排序週(sortAgo=k 週前,0=本週);台幣匯率卡的觀察週數
 const ui = {
-  assetWeeks: 4,  assetView: 'chart',
-  regionWeeks: 4, regionView: 'chart',
+  assetWeeks: 4,  assetView: 'chart',  assetSortAgo: 0,
+  regionWeeks: 4, regionView: 'chart', regionSortAgo: 0,
   twdWeeks: 12,
 };
 
@@ -523,8 +523,7 @@ function assetRows(nWeeks) {
   }
 
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
-  // 本週漲幅由高到低排:最上面就是「錢現在停的地方」
-  return rows.sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
+  return rows;
 }
 
 // 區域列:貨幣兌美元的每週升貶值(1/匯率 → 升 = 該貨幣升值 = 流入傾向)
@@ -546,7 +545,14 @@ function regionRows(nWeeks) {
     rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells: weeklyChanges(twdSeries, nWeeks) });
   }
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
-  return rows.sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
+  return rows;
+}
+
+// 依「ago 週前」該欄的漲跌排序(高→低,無資料排最後);該欄值掛到 r.sortVal 供右欄數字用
+function sortRowsByWeek(rows, nWeeks, ago) {
+  const idx = nWeeks - 1 - ago;
+  for (const r of rows) r.sortVal = r.cells[idx]?.pct ?? null;
+  return rows.sort((a, b) => (b.sortVal ?? -Infinity) - (a.sortVal ?? -Infinity));
 }
 
 // ===== 熱力圖(D3)=====
@@ -555,7 +561,7 @@ function weekLabel(idx, nWeeks) {
   return idx === nWeeks - 1 ? '本週' : `-${nWeeks - 1 - idx}週`;
 }
 
-function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
+function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, onSortAgo) {
   const container = $(containerSel);
   if (!rows.length) { container.replaceChildren(); return; }
 
@@ -567,6 +573,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
   const rowH = 32, cellH = rowH - 6;
   const cellW = (width - labelW - valueW - gap * nWeeks) / nWeeks;
   const height = headerH + rows.length * rowH + 2;
+  const colX = (j) => labelW + j * (cellW + gap);
 
   const ink = cssVar('--ink');
   const cIn = cssVar('--series-in');
@@ -586,74 +593,142 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
     .interpolate(d3.interpolateLab)
     .clamp(true);
 
-  const svg = d3.create('svg')
-    .attr('viewBox', `0 0 ${width} ${height}`)
-    .attr('role', 'img');
+  // svg 骨架持久化:同一骨架下切換排序週,列的位移才做得了 transition;
+  // 版面參數變了(改觀察期間、列數增減、視窗寬度變)才整棵重建
+  const sig = `${width}|${nWeeks}|${rows.length}`;
+  let svg = d3.select(container).select('svg.hm-svg');
+  if (svg.empty() || svg.attr('data-sig') !== sig) {
+    svg = d3.create('svg').attr('class', 'hm-svg').attr('data-sig', sig);
+    const pat = svg.append('defs').append('pattern')
+      .attr('id', patId).attr('width', 6).attr('height', 6)
+      .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
+    pat.append('rect').attr('width', 6).attr('height', 6);
+    pat.append('line').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 6)
+      .attr('stroke-width', 1.4).attr('opacity', 0.6);
+    svg.append('g').attr('class', 'hm-cols');
+    svg.append('g').attr('class', 'hm-rows');
+    container.replaceChildren(svg.node());
+  }
+  svg.attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+  // 格紋顏色每次同步(跟著深淺色主題)
+  svg.select(`#${patId} rect`).attr('fill', surface);
+  svg.select(`#${patId} line`).attr('stroke', cMuted);
 
-  // 「資料累積中」的斜線格紋
-  const pat = svg.append('defs').append('pattern')
-    .attr('id', patId).attr('width', 6).attr('height', 6)
-    .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
-  pat.append('rect').attr('width', 6).attr('height', 6).attr('fill', surface);
-  pat.append('line').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 6)
-    .attr('stroke', cMuted).attr('stroke-width', 1.4).attr('opacity', 0.6);
+  const sortIdx = nWeeks - 1 - sortAgo;
+  // 點已選中的欄 → 回到預設「本週」
+  const clickSort = (ago) => { hideTooltip(); onSortAgo(ago === sortAgo ? 0 : ago); };
 
-  // 欄標(週):格子太窄時隔一格標一次,「本週」永遠標
+  // 欄標(週)與整欄點擊目標:每次重建(選中欄樣式、標籤密度會變)
+  // 格子太窄時隔一格標一次;「本週」與選中欄永遠標
+  const cols = svg.select('g.hm-cols');
+  cols.selectAll('*').remove();
   const labelEvery = cellW >= 34 ? 1 : 2;
   for (let j = 0; j < nWeeks; j++) {
+    const ago = nWeeks - 1 - j;
+    const isSel = j === sortIdx;
     const isLast = j === nWeeks - 1;
-    if (!isLast && (nWeeks - 1 - j) % labelEvery !== 0) continue;
-    svg.append('text')
-      .attr('x', labelW + j * (cellW + gap) + cellW / 2)
-      .attr('y', headerH - 8)
-      .attr('text-anchor', 'middle')
-      .attr('font-size', 11)
-      .attr('font-weight', isLast ? 800 : 400)
-      .attr('fill', isLast ? cText : cMuted)
-      .text(weekLabel(j, nWeeks));
+    if (isLast || isSel || ago % labelEvery === 0) {
+      cols.append('text')
+        .attr('class', 'hm-colhead')
+        .attr('x', colX(j) + cellW / 2)
+        .attr('y', headerH - 8)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', 11)
+        .attr('font-weight', isSel ? 800 : 400)  // 粗體跟著選中欄(預設=本週)
+        .attr('fill', isSel ? cText : cMuted)
+        .attr('pointer-events', 'none')
+        .text(weekLabel(j, nWeeks));
+    }
+    if (isSel) {
+      // 選中欄:標籤底線 + 整欄圓角外框(粗墨框語彙)
+      cols.append('rect')
+        .attr('x', colX(j) + cellW / 2 - 14).attr('y', headerH - 5)
+        .attr('width', 28).attr('height', 3).attr('rx', 1.5)
+        .attr('fill', ink).attr('pointer-events', 'none');
+      cols.append('rect')
+        .attr('x', colX(j) - 2).attr('y', headerH - 2)
+        .attr('width', Math.max(2, cellW) + 4)
+        .attr('height', (rows.length - 1) * rowH + cellH + 4)
+        .attr('rx', 7).attr('fill', 'none')
+        .attr('stroke', ink).attr('stroke-width', 2)
+        .attr('pointer-events', 'none');
+    }
+    // 欄標列的點擊區(窄格沒文字標籤的欄也點得到)
+    const span = rows[0].cells[j];
+    cols.append('rect')
+      .attr('x', colX(j)).attr('y', 0)
+      .attr('width', Math.max(2, cellW) + gap).attr('height', headerH)
+      .attr('fill', 'transparent').attr('cursor', 'pointer')
+      .on('mouseenter mousemove', (ev) => {
+        showTooltip([
+          { text: `${weekLabel(j, nWeeks)}(${span.from} → ${span.to})`, cls: 'tt-label' },
+          { text: isSel && !isLast ? '點擊:回到依本週排序' : '點擊:依此週排序', cls: 'tt-label' },
+        ], ev.clientX, ev.clientY);
+      })
+      .on('mouseleave', hideTooltip)
+      .on('click', () => clickSort(ago));
   }
+  // 右欄數字的小字頭:標明顯示的是選中週的漲跌
+  cols.append('text')
+    .attr('x', colX(nWeeks) + 8)
+    .attr('y', headerH - 8)
+    .attr('font-size', 10)
+    .attr('fill', cMuted)
+    .text(`${weekLabel(sortIdx, nWeeks)} %`);
 
-  rows.forEach((row, i) => {
-    const y = headerH + i * rowH;
-    svg.append('text')
+  // 列:keyed join——排序切換時列的 y 位移做 transition,列內容(顏色、數字、tooltip)每次重建
+  const rowY = new Map(rows.map((r, i) => [r.name, headerH + i * rowH]));
+  const rowSel = svg.select('g.hm-rows').selectAll('g.hm-row')
+    .data(rows, d => d.name);
+  rowSel.exit().remove();
+  const rowEnter = rowSel.enter().append('g').attr('class', 'hm-row')
+    .attr('transform', d => `translate(0,${rowY.get(d.name)})`);  // 新列直接落定,不動畫
+  rowSel.transition().duration(500).ease(d3.easeCubicInOut)
+    .attr('transform', d => `translate(0,${rowY.get(d.name)})`);
+
+  rowEnter.merge(rowSel).each(function (row) {
+    const g = d3.select(this);
+    g.selectAll('*').remove();
+    g.append('text')
       .attr('x', labelW - 10)
-      .attr('y', y + cellH / 2 + 4)
+      .attr('y', cellH / 2 + 4)
       .attr('text-anchor', 'end')
       .attr('font-size', 12.5)
       .attr('fill', cSub)
       .text(row.name);
 
     row.cells.forEach((cell, j) => {
-      const rect = svg.append('rect')
-        .attr('x', labelW + j * (cellW + gap))
-        .attr('y', y)
+      const rect = g.append('rect')
+        .attr('x', colX(j))
+        .attr('y', 0)
         .attr('width', Math.max(2, cellW))
         .attr('height', cellH)
         .attr('rx', 5)
         .attr('fill', cell.pct === null ? `url(#${patId})` : color(cell.pct))
         .attr('stroke', ink)
-        .attr('stroke-width', 1.4);
+        .attr('stroke-width', 1.4)
+        .attr('cursor', 'pointer');
       rect.on('mouseenter mousemove', (ev) => {
         showTooltip([
           { text: `${row.name} · ${weekLabel(j, nWeeks)}`, cls: 'tt-label' },
           { text: `${cell.from} → ${cell.to}` , cls: 'tt-label' },
           { text: cell.pct === null ? '—(資料累積中)' : fmtPct(cell.pct), cls: 'tt-value' },
+          { text: '點擊:依此週排序', cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
-      }).on('mouseleave', hideTooltip);
+      }).on('mouseleave', hideTooltip)
+        .on('click', () => clickSort(nWeeks - 1 - j));
     });
 
-    // 最右:本週數字
-    svg.append('text')
-      .attr('x', labelW + nWeeks * (cellW + gap) + 8)
-      .attr('y', y + cellH / 2 + 4)
+    // 最右:選中週的數字
+    g.append('text')
+      .attr('x', colX(nWeeks) + 8)
+      .attr('y', cellH / 2 + 4)
       .attr('font-size', 12.5)
       .attr('font-weight', 700)
-      .attr('fill', row.latest === null ? cMuted : cText)
+      .attr('fill', row.sortVal === null ? cMuted : cText)
       .attr('font-variant-numeric', 'tabular-nums')
-      .text(row.latest === null ? '—' : fmtPct(row.latest));
+      .text(row.sortVal === null ? '—' : fmtPct(row.sortVal));
   });
-
-  container.replaceChildren(svg.node());
 
   // 圖例:漸層色帶 + 累積中格紋
   const legend = $(legendSel);
@@ -716,7 +791,7 @@ function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
   wrap.replaceChildren(table);
 }
 
-// 卡內摘要:本週錢停在哪、從哪撤出(rows 已按本週漲幅排序)
+// 卡內摘要:本週錢停在哪、從哪撤出(呼叫端須傳入「按本週漲幅排序」的列,不可餵其他排序)
 function flowSummary(rows, inText, outText) {
   const inflow = rows.filter(r => r.latest !== null && r.latest > 0.3).slice(0, 3).map(r => r.name);
   const outflow = rows.filter(r => r.latest !== null && r.latest < -0.3).slice(-3).map(r => r.name);
@@ -740,23 +815,32 @@ function oilSpreadText() {
 function renderAssetCard() {
   const rows = assetRows(ui.assetWeeks);
   if (!rows.length) return;
+  // 摘要固定用「本週」語意(用按本週排序的複本算),不隨排序週改變
+  const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
   $('#asset-summary').textContent =
-    flowSummary(rows, '本週資金停泊處', '本週撤出') + oilSpreadText();
+    flowSummary(byLatest, '本週資金停泊處', '本週撤出') + oilSpreadText();
+  if (ui.assetSortAgo > ui.assetWeeks - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序週回到本週
+  const sorted = sortRowsByWeek(rows, ui.assetWeeks, ui.assetSortAgo);
   if (ui.assetView === 'chart') {
-    renderHeatmap('#asset-heatmap', '#asset-legend', rows, ui.assetWeeks, 'hatch-asset');
+    renderHeatmap('#asset-heatmap', '#asset-legend', sorted, ui.assetWeeks, 'hatch-asset',
+      ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); });
   } else {
-    renderFlowTable('#asset-table', rows, ui.assetWeeks, '資產', true);
+    renderFlowTable('#asset-table', sorted, ui.assetWeeks, '資產', true);
   }
 }
 
 function renderRegionCard() {
   const rows = regionRows(ui.regionWeeks);
   if (!rows.length) return;
-  $('#region-summary').textContent = flowSummary(rows, '近一週資金傾向流入', '傾向流出');
+  const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
+  $('#region-summary').textContent = flowSummary(byLatest, '近一週資金傾向流入', '傾向流出');
+  if (ui.regionSortAgo > ui.regionWeeks - 1) ui.regionSortAgo = 0;
+  const sorted = sortRowsByWeek(rows, ui.regionWeeks, ui.regionSortAgo);
   if (ui.regionView === 'chart') {
-    renderHeatmap('#region-heatmap', '#region-legend', rows, ui.regionWeeks, 'hatch-region');
+    renderHeatmap('#region-heatmap', '#region-legend', sorted, ui.regionWeeks, 'hatch-region',
+      ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); });
   } else {
-    renderFlowTable('#region-table', rows, ui.regionWeeks, '區域', false);
+    renderFlowTable('#region-table', sorted, ui.regionWeeks, '區域', false);
   }
 }
 
