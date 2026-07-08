@@ -54,6 +54,17 @@ const SCANNER_FLOWS = [
   { sym: 'OANDA:XCUUSD',  ep: 'global',  name: '銅(綠色通膨)' },
   { sym: 'NASDAQ:ICLN',   ep: 'global',  name: '綠能(ICLN)' },
   { sym: 'NASDAQ:AIQ',    ep: 'global',  name: 'AI(AIQ)' },
+  // 全球主要股指(scanner 直接支援指數本尊;TVC:SHCOMP 不存在,上證用 SSE:000001)
+  { sym: 'SP:SPX',        ep: 'global',  name: '美股(S&P 500)' },
+  { sym: 'NASDAQ:IXIC',   ep: 'global',  name: '美股(NASDAQ)' },
+  { sym: 'NASDAQ:SOX',    ep: 'global',  name: '美股(費半)' },
+  { sym: 'TVC:NI225',     ep: 'global',  name: '日股(日經 225)' },
+  { sym: 'TVC:SX5E',      ep: 'global',  name: '歐股(STOXX 50)' },
+  { sym: 'SSE:000001',    ep: 'global',  name: '中國股(上證)' },
+  { sym: 'SZSE:399001',   ep: 'global',  name: '中國股(深證)' },
+  { sym: 'TVC:HSI',       ep: 'global',  name: '香港(恒生)' },
+  // 債市:TLT(20 年期以上美債 ETF),漲=資金流入債市避險、跌=流出
+  { sym: 'NASDAQ:TLT',    ep: 'global',  name: '債市(美債 TLT)' },
 ];
 
 // 美債殖利率(scanner 同一批抓)
@@ -226,10 +237,11 @@ async function fetchTwdFx() {
   if (!latestRates) throw new Error('currency-api 缺台幣匯率');
   hist[latest.date] = latestRates;
 
-  // 由最新日期往回每 7 天一個錨點(供最長 12 週折線);
-  // 歷史匯率不會變,快取命中就不再請求 —— 首次載入約 13 個請求,之後每小時只抓 latest
+  // 錨點:最近 1–6 天每日一點(供「1 週」視窗畫日趨勢)+ 往回每 7 天一點 × 12 週;
+  // 歷史匯率不會變,快取命中就不再請求 —— 首次載入約 19 個請求,之後每天只新增 1–2 個
   const baseMs = new Date(latest.date).getTime();
   const anchors = [];
+  for (let d = 1; d <= 6; d++) anchors.push(isoDate(new Date(baseMs - d * DAY_MS)));
   for (let w = 1; w <= 12; w++) anchors.push(isoDate(new Date(baseMs - w * 7 * DAY_MS)));
   await Promise.allSettled(anchors.filter(d => !hist[d]).map(async (d) => {
     const rates = twdRatesFrom(await fetchTwdFxDate(d));

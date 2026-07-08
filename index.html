@@ -43,6 +43,7 @@
       <div class="card-controls">
         <span class="seg-label">觀察期間</span>
         <div class="seg-toggle" id="twd-weeks" role="tablist">
+          <button type="button" data-weeks="1">1 週</button>
           <button type="button" data-weeks="4">4 週</button>
           <button type="button" data-weeks="8">8 週</button>
           <button type="button" data-weeks="12" class="active">12 週</button>
@@ -54,7 +55,7 @@
     <div id="twd-chart" class="twd-chart"></div>
     <div class="twd-legend" id="twd-legend"></div>
     <p class="bond-read" id="twd-read"></p>
-    <p class="card-footnote">匯率來自 currency-api(每日更新一次);歷史走勢以每週一點取樣,最新一點為當日匯率。</p>
+    <p class="card-footnote">匯率來自 currency-api(每日更新一次);最近一週為每日一點、更早以每週一點取樣,最新一點為當日匯率。</p>
   </section>
 
   <!-- ===== 聯準會拔拔(美債殖利率曲線 + VIX + 通膨與就業)===== -->
@@ -95,7 +96,7 @@
     <div id="asset-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="asset-legend"></div>
     <div id="asset-table" class="region-table" hidden></div>
-    <p class="card-footnote">原油(WTI/布蘭特)、銅、綠能(ICLN)、AI(AIQ)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本頁跨日累積推算,啟用初期會顯示白底斜線格(資料累積中),約四週後補齊。</p>
+    <p class="card-footnote">原油(WTI/布蘭特)、銅、綠能(ICLN)、AI(AIQ)、各股指(美股/日股/歐股/中國股/香港)與債市(TLT)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本頁跨日累積推算,啟用初期會顯示白底斜線格(資料累積中),約四週後補齊。債市列用 TLT(20 年期以上美債 ETF):漲=資金流入債市避險、跌=流出。</p>
   </section>
 
   <!-- ===== 區域資金流向(近 N 週熱力圖)===== -->
