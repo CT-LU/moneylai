@@ -173,6 +173,22 @@ function el(tag, className, text) {
   return node;
 }
 
+// 結論子區塊:粉紅標籤 + 白底黑粗體結論;多於一項時以數字編號逐行條列。
+// items 的元素可為字串或 DOM 節點(null/空字串自動略過);note 為非結論的補充說明(細字)
+function setRead(p, tag, items, note) {
+  const list = items.filter(Boolean);
+  if (!list.length) { p.textContent = ''; return; }
+  const kids = [el('span', 'bond-tag', tag)];
+  list.forEach((it, i) => {
+    const line = el('span', 'read-item');
+    if (list.length > 1) line.append(`${i + 1}. `);
+    line.append(it);
+    kids.push(line);
+  });
+  if (note) kids.push(el('span', 'read-note', note));
+  p.replaceChildren(...kids);
+}
+
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1547,12 +1563,11 @@ function renderBondRead(data, vix) {
     vixText = `股市端:${level}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)${combo}。`;
   }
 
-  p.replaceChildren(
-    el('span', 'bond-tag', tag),
-    document.createTextNode(`${text} `),
+  setRead(p, tag, [
+    text,
     el('span', spreadBp < 0 ? 'warn' : '', spreadText),
-    document.createTextNode(` ${vixText}一週前與一月前為以 TradingView 表現欄位反推的估值。`),
-  );
+    vixText || null,
+  ], '一週前與一月前為以 TradingView 表現欄位反推的估值。');
 }
 
 // 風險胃納合讀:套利端(美日利差)、信用端(HYG 相對 LQD)、股債比(SPX 相對 TLT)
@@ -1587,8 +1602,7 @@ function renderRiskRead() {
     parts.push(`股債比:S&P 500 本週 ${fmtPct(spx.perfW)}、債市 TLT ${fmtPct(tlt.perfW)},${verdict}。`);
   }
 
-  if (!parts.length) { p.textContent = ''; return; }
-  p.replaceChildren(el('span', 'bond-tag', '風險胃納'), document.createTextNode(parts.join(' ')));
+  setRead(p, '風險胃納', parts);
 }
 
 function renderBondCard() {
@@ -1788,13 +1802,11 @@ function renderMacroRead() {
   else if (!inflHot && jobsWeak) verdict = '通膨降溫且就業轉弱,降息的空間與壓力同時上升,利多債市。';
   else verdict = '通膨受控且就業穩健,政策可保持耐心,市場主軸回到基本面。';
 
-  p.replaceChildren(
-    el('span', 'bond-tag', '雙重使命'),
-    document.createTextNode(
-      `通膨端:核心 PCE 年增 ${pceNow.value.toFixed(1)}%(${pceNow.date}),${inflText};` +
-      `就業端:失業率 ${urNow.value.toFixed(1)}%、近三月非農平均月增 ${Math.round(nfp3m)} 千人,${jobsText}。${verdict}`
-    ),
-  );
+  setRead(p, '雙重使命', [
+    `通膨端:核心 PCE 年增 ${pceNow.value.toFixed(1)}%(${pceNow.date}),${inflText}。`,
+    `就業端:失業率 ${urNow.value.toFixed(1)}%、近三月非農平均月增 ${Math.round(nfp3m)} 千人,${jobsText}。`,
+    verdict,
+  ]);
 }
 
 // ===== 新台幣匯率卡 =====
@@ -1990,10 +2002,10 @@ function renderTwdRead(win, nWeeks) {
   const verdict = nDep >= 3 ? '台幣全面走貶,熱錢流出台灣的傾向明顯。'
     : nApp >= 3 ? '台幣全面走升,資金流入台灣的傾向明顯。'
     : '台幣漲跌互見,主要反映各貨幣自身強弱,資金進出台灣的訊號不明顯。';
-  p.replaceChildren(
-    el('span', 'bond-tag', `近 ${nWeeks} 週`),
-    document.createTextNode(`台幣${parts.join('、')}。${verdict}`),
-  );
+  setRead(p, `近 ${nWeeks} 週`, [
+    `台幣${parts.join('、')}。`,
+    verdict,
+  ]);
 }
 
 function renderTwdCard() {
@@ -2191,10 +2203,10 @@ function renderForeignRead(rows) {
     verdict = '外資進出與台幣波動都有限,資金面對台灣暫呈觀望。';
   }
 
-  p.replaceChildren(
-    el('span', 'bond-tag', '外資動向'),
-    document.createTextNode(`${streakText}${sumText}。${verdict}`),
-  );
+  setRead(p, '外資動向', [
+    `${streakText}${sumText}。`,
+    verdict,
+  ]);
 }
 
 function renderForeignCard() {
@@ -2447,7 +2459,7 @@ function renderChinaEtfRead() {
   } else {
     verdict = '量能與走勢正常,無護盤跡象。';
   }
-  p.replaceChildren(el('span', 'bond-tag', '國家隊'), document.createTextNode(`${nums}。${verdict}`));
+  setRead(p, '國家隊', [`${nums}。`, verdict]);
 }
 
 function renderChinaLegend() {
@@ -2505,8 +2517,7 @@ function renderChinaRead() {
     combo = ' 境內去槓桿疊加資金南下,留意 A 股的資金面壓力。';
   }
 
-  if (!parts.length) { p.textContent = ''; return; }
-  p.replaceChildren(el('span', 'bond-tag', '三路合讀'), document.createTextNode(parts.join(' ') + combo));
+  setRead(p, '三路合讀', [...parts, combo.trim()]);
 }
 
 function renderChinaCard() {
