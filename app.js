@@ -291,6 +291,11 @@ function recordScannerHistory() {
       if (new Date(d).getTime() < today.getTime() - 100 * DAY_MS) delete h[d];
     }
   }
+  // 汰除已不再追蹤的標的:改代碼或移除標的後,孤兒紀錄不能永遠留著
+  const tracked = new Set(SCANNER_ALL.map(a => a.sym));
+  for (const sym of Object.keys(hist)) {
+    if (!tracked.has(sym)) delete hist[sym];
+  }
   try { localStorage.setItem(SCAN_HIST_KEY, JSON.stringify(hist)); }
   catch { /* 隱私模式等寫入失敗,略過即可 */ }
 }
