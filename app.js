@@ -6,10 +6,9 @@
    - Frankfurter API(ECB 匯率,每交易日更新)→ 美元指數近似、日圓、
      新興市場貨幣籃、區域資金流向(抓 92 天,供最長 12 週熱力圖)
    - CoinGecko market_chart(days=95,回日資料)→ BTC / ETH / 黃金(PAXG)
-   - TWSE rwd API → 台灣加權指數(本月 + 前三個月的每日收盤)
-   - TradingView scanner → 原油、銅、綠能(ICLN)、AI(AIQ)即時報價與
-     近一週/近一月表現;美債 2Y/10Y/30Y 殖利率
-   - TradingView widget → DXY / VIX / 各國股市 / 加密與 AI 即時報價
+   - TradingView scanner → 原油 WTI/布蘭特、銅、綠能(ICLN)、AI(AIQ)
+     即時報價與近一週/近一月表現;美債 2Y/10Y/30Y 殖利率、VIX、美元兌台幣
+   - TradingView widget → DXY / VIX / 各國股市(含台灣加權)/ 加密與 AI 即時報價
    原則:各資料源獨立抓取,單一來源失敗不影響其他區塊;
         重新抓取時保留前一次渲染(降透明度),不跳版。
    ============================================================ */
@@ -23,7 +22,8 @@ const DXY_CONST = 50.14348112;
 // 新興市場貨幣籃(等權幾何平均)
 const EM_BASKET = ['KRW', 'INR', 'CNY', 'MXN', 'ZAR'];
 
-// 區域資金流向的貨幣(ECB 有提供的清單;無 TWD)
+// 區域資金流向的貨幣(ECB 有提供的清單;台灣的 TWD ECB 沒有,
+// 改走 TradingView scanner + localStorage 累積,見 TWD_REGION)
 const REGIONS = [
   { code: 'EUR', name: '歐元區', pair: 'EUR/USD' },
   { code: 'JPY', name: '日本',   pair: 'USD/JPY' },
@@ -32,20 +32,25 @@ const REGIONS = [
   { code: 'AUD', name: '澳洲',   pair: 'AUD/USD' },
   { code: 'CNY', name: '中國',   pair: 'USD/CNY' },
   { code: 'KRW', name: '南韓',   pair: 'USD/KRW' },
+  { code: 'SGD', name: '新加坡', pair: 'USD/SGD' },
   { code: 'INR', name: '印度',   pair: 'USD/INR' },
   { code: 'MXN', name: '墨西哥', pair: 'USD/MXN' },
   { code: 'ZAR', name: '南非',   pair: 'USD/ZAR' },
 ];
+
+// 台灣列:美元兌台幣(scanner 即時報價,舊週格靠 localStorage 跨日累積)
+const TWD_REGION = { sym: 'FX_IDC:USDTWD', name: '台灣', pair: 'USD/TWD' };
 
 const ALL_FX = [...new Set([...Object.keys(DXY_WEIGHTS), ...EM_BASKET, ...REGIONS.map(r => r.code)])];
 
 // TradingView scanner:資產流向用(即期價 + 近一週/近一月表現;
 // 更早的逐週資料靠 localStorage 跨日累積,初期會缺格)
 const SCANNER_FLOWS = [
-  { sym: 'NYMEX:CL1!',   ep: 'futures', name: '原油 WTI' },
-  { sym: 'OANDA:XCUUSD', ep: 'global',  name: '銅(綠色通膨)' },
-  { sym: 'NASDAQ:ICLN',  ep: 'global',  name: '綠能(ICLN)' },
-  { sym: 'NASDAQ:AIQ',   ep: 'global',  name: 'AI(AIQ)' },
+  { sym: 'NYMEX:CL1!',    ep: 'futures', name: '原油 WTI' },
+  { sym: 'ICEEUR:BRN1!',  ep: 'futures', name: '原油 布蘭特' },
+  { sym: 'OANDA:XCUUSD',  ep: 'global',  name: '銅(綠色通膨)' },
+  { sym: 'NASDAQ:ICLN',   ep: 'global',  name: '綠能(ICLN)' },
+  { sym: 'NASDAQ:AIQ',    ep: 'global',  name: 'AI(AIQ)' },
 ];
 
 // 美債殖利率(scanner 同一批抓)
@@ -55,13 +60,16 @@ const BOND_TENORS = [
   { sym: 'TVC:US30Y', label: '30 年', short: '30Y' },
 ];
 
+const VIX_SYM = 'TVC:VIX';
+
 const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
+  { sym: VIX_SYM, ep: 'global', name: 'VIX' },
+  { sym: TWD_REGION.sym, ep: 'global', name: '美元兌台幣' },
 ];
 
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
-const TAIEX_POLL_MS = 60 * 60 * 1000;    // TWSE 盤後資料,每小時輪詢即可
 const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
 const HISTORY_POLL_MS = 60 * 60 * 1000;  // CoinGecko 歷史,每小時
 
@@ -71,7 +79,6 @@ const DAY_MS = 86400e3;
 const state = {
   fxDates: [],      // 排序後的日期字串
   fxRates: null,    // { date: { EUR: .., JPY: .. } },base = USD
-  taiex: [],        // TWSE 日收盤 [{ date, value, chg }]
   scanner: null,    // { sym: { close, change, perfW, perf1M } }
   cryptoHist: null, // { coinId: [{ date, value }] } 95 日日收盤
 };
@@ -149,34 +156,6 @@ async function fetchFX() {
   const data = await res.json();
   state.fxRates = data.rates;
   state.fxDates = Object.keys(data.rates).sort();
-}
-
-// 台股加權指數:TWSE 市場成交資訊(本月 + 前三個月,供 12 週熱力圖)
-async function fetchTaiex() {
-  const now = new Date();
-  const months = [3, 2, 1, 0].map(k => new Date(now.getFullYear(), now.getMonth() - k, 1));
-  const results = await Promise.all(months.map(d => {
-    const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}01`;
-    return fetch(`https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=${ym}&response=json`)
-      .then(r => { if (!r.ok) throw new Error(`TWSE ${r.status}`); return r.json(); });
-  }));
-  const rows = [];
-  for (const res of results) {
-    if (res.stat !== 'OK' || !Array.isArray(res.data)) continue;  // 月初可能尚無本月資料
-    for (const row of res.data) {
-      // 日期是民國年(115/07/01),數值含千分位逗號
-      const [y, m, d] = String(row[0]).split('/').map(Number);
-      const value = Number(String(row[4]).replace(/,/g, ''));
-      if (!Number.isFinite(value)) continue;
-      rows.push({
-        date: `${y + 1911}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
-        value,
-      });
-    }
-  }
-  rows.sort((a, b) => a.date.localeCompare(b.date));
-  if (!rows.length) throw new Error('TWSE 無資料');
-  state.taiex = rows;
 }
 
 // TradingView scanner:一次 POST 拿多檔報價
@@ -379,7 +358,6 @@ function assetRows(nWeeks) {
     add('日圓(兌美元)', toSeries(state.fxDates, fxSeries('JPY').map(v => 1 / v)), 'ECB 匯率');
     add('新興市場貨幣籃', toSeries(state.fxDates, emIndexSeries()), 'ECB 匯率');
   }
-  if (state.taiex.length) add('台股加權指數', state.taiex, 'TWSE');
   if (state.cryptoHist) {
     add('黃金(PAXG)', state.cryptoHist['pax-gold'], 'CoinGecko');
     add('比特幣', state.cryptoHist['bitcoin'], 'CoinGecko');
@@ -396,12 +374,22 @@ function assetRows(nWeeks) {
 
 // 區域列:貨幣兌美元的每週升貶值(1/匯率 → 升 = 該貨幣升值 = 流入傾向)
 function regionRows(nWeeks) {
-  if (!state.fxRates) return [];
-  const rows = REGIONS.map(r => ({
-    name: r.name,
-    src: r.pair,
-    cells: weeklyChanges(toSeries(state.fxDates, fxSeries(r.code).map(v => 1 / v)), nWeeks),
-  }));
+  const rows = [];
+  if (state.fxRates) {
+    for (const r of REGIONS) {
+      rows.push({
+        name: r.name,
+        src: r.pair,
+        cells: weeklyChanges(toSeries(state.fxDates, fxSeries(r.code).map(v => 1 / v)), nWeeks),
+      });
+    }
+  }
+  // 台灣:ECB 沒有 TWD,改用 scanner 的美元兌台幣(取倒數 = 台幣價值)
+  const twdSeries = scannerSeries(TWD_REGION.sym)
+    .map(p => ({ date: p.date, value: 1 / p.value }));
+  if (twdSeries.length >= 2) {
+    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells: weeklyChanges(twdSeries, nWeeks) });
+  }
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
   return rows.sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
 }
@@ -432,6 +420,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
   const cText = cssVar('--text-primary');
   const cSub = cssVar('--text-secondary');
   const cMuted = cssVar('--text-muted');
+  const surface = cssVar('--surface-1');   // 「資料累積中」格用白底(卡片底色),與資料格區分
 
   // 色階:對稱 diverging,依資料絕對值決定上限(1.5%~8% 之間夾住)
   const absVals = rows.flatMap(r => r.cells.filter(c => c.pct !== null).map(c => Math.abs(c.pct)));
@@ -450,7 +439,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
   const pat = svg.append('defs').append('pattern')
     .attr('id', patId).attr('width', 6).attr('height', 6)
     .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)');
-  pat.append('rect').attr('width', 6).attr('height', 6).attr('fill', cMid);
+  pat.append('rect').attr('width', 6).attr('height', 6).attr('fill', surface);
   pat.append('line').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 6)
     .attr('stroke', cMuted).attr('stroke-width', 1.4).attr('opacity', 0.6);
 
@@ -526,7 +515,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId) {
     .attr('id', `${patId}-leg`).attr('width', 6).attr('height', 6)
     .attr('patternUnits', 'userSpaceOnUse').attr('patternTransform', 'rotate(45)')
     .call(g => {
-      g.append('rect').attr('width', 6).attr('height', 6).attr('fill', cMid);
+      g.append('rect').attr('width', 6).attr('height', 6).attr('fill', surface);
       g.append('line').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 6)
         .attr('stroke', cMuted).attr('stroke-width', 1.4).attr('opacity', 0.6);
     });
@@ -584,10 +573,20 @@ function flowSummary(rows, inText, outText) {
 
 // ===== 兩張流向卡 =====
 
+// 布蘭特 − WTI 價差:反映地緣/運輸溢酬,差距走闊常見於供給面緊張
+function oilSpreadText() {
+  const wti = state.scanner?.['NYMEX:CL1!'];
+  const brent = state.scanner?.['ICEEUR:BRN1!'];
+  if (!Number.isFinite(wti?.close) || !Number.isFinite(brent?.close)) return '';
+  const spread = brent.close - wti.close;
+  return `布蘭特 $${brent.close.toFixed(2)} − WTI $${wti.close.toFixed(2)},價差 $${spread.toFixed(2)}。`;
+}
+
 function renderAssetCard() {
   const rows = assetRows(ui.assetWeeks);
   if (!rows.length) return;
-  $('#asset-summary').textContent = flowSummary(rows, '本週資金停泊處', '本週撤出');
+  $('#asset-summary').textContent =
+    flowSummary(rows, '本週資金停泊處', '本週撤出') + oilSpreadText();
   if (ui.assetView === 'chart') {
     renderHeatmap('#asset-heatmap', '#asset-legend', rows, ui.assetWeeks, 'hatch-asset');
   } else {
@@ -606,7 +605,7 @@ function renderRegionCard() {
   }
 }
 
-// ===== 美債長短天期趨勢卡 =====
+// ===== 股債趨勢卡(美債殖利率曲線 + VIX)=====
 
 // 由 scanner 報價整理三個天期的「今天 / 一週前 / 一月前」殖利率
 function bondPoints() {
@@ -625,6 +624,14 @@ function bondPoints() {
     });
   }
   return out;
+}
+
+// VIX 現值與週變化(點數;wAgo 由 Perf.W 反推)
+function vixPoint() {
+  const q = state.scanner?.[VIX_SYM];
+  if (!q || !Number.isFinite(q.close)) return null;
+  const wAgo = Number.isFinite(q.perfW) ? q.close / (1 + q.perfW / 100) : null;
+  return { now: q.close, dW: wAgo !== null ? q.close - wAgo : null };
 }
 
 function renderBondChart(data) {
@@ -727,7 +734,7 @@ function renderBondChart(data) {
   container.replaceChildren(svg.node());
 }
 
-function renderBondStats(data) {
+function renderBondStats(data, vix) {
   const wrap = $('#bond-stats');
   const boxes = [];
 
@@ -762,11 +769,26 @@ function renderBondStats(data) {
     boxes.push(box);
   }
 
+  // VIX(股市端的恐慌溫度計):>20 = 避險情緒升溫
+  if (vix) {
+    const hot = vix.now >= 20;
+    const box = el('div', `bond-stat vix${hot ? ' inverted' : ''}`);
+    box.appendChild(el('div', 'label', `VIX 恐慌指數${hot ? '(⚠ 避險情緒)' : ''}`));
+    box.appendChild(el('div', 'value', vix.now.toFixed(1)));
+    const delta = el('div', 'delta');
+    const cls = !Number.isFinite(vix.dW) || Math.abs(vix.dW) < 0.05 ? 'flat' : vix.dW > 0 ? 'up' : 'down';
+    delta.appendChild(el('span', cls, vix.dW === null ? '—'
+      : `${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點`));
+    delta.appendChild(el('span', 'period', ' / 週(升=市場轉趨緊張)'));
+    box.appendChild(delta);
+    boxes.push(box);
+  }
+
   wrap.replaceChildren(...boxes);
 }
 
-// 牛陡/熊陡/牛平/熊平 + 資金含義
-function renderBondRead(data) {
+// 牛陡/熊陡/牛平/熊平 + VIX 股市情緒 + 資金含義
+function renderBondRead(data, vix) {
   const t2 = data.find(d => d.short === '2Y');
   const t10 = data.find(d => d.short === '10Y');
   const p = $('#bond-read');
@@ -804,20 +826,34 @@ function renderBondRead(data) {
     spreadText = `目前 10Y−2Y 利差 ${fmtBp(spreadBp, 0)},曲線為正斜率。`;
   }
 
+  // 股市端:VIX 水位 + 與債市方向合讀
+  let vixText = '';
+  if (vix && Number.isFinite(vix.dW)) {
+    const level = vix.now >= 30 ? 'VIX 高於 30,市場處於恐慌'
+      : vix.now >= 20 ? 'VIX 高於 20,股市避險情緒升溫'
+      : vix.now >= 15 ? 'VIX 在正常區間,股市情緒平穩'
+      : 'VIX 低於 15,股市情緒偏樂觀';
+    let combo = '';
+    if (vix.dW > 1 && d10 < -TH) combo = '——與資金湧入長債同向,股債同步發出避險訊號';
+    else if (vix.dW < -1 && d10 > TH) combo = '——與殖利率走升同向,整體偏風險偏好';
+    vixText = `股市端:${level}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)${combo}。`;
+  }
+
   p.replaceChildren(
     el('span', 'bond-tag', tag),
-    document.createTextNode(`${text}${spreadBp < 0 ? ' ' : ' '}`),
+    document.createTextNode(`${text} `),
     el('span', spreadBp < 0 ? 'warn' : '', spreadText),
-    document.createTextNode(' 一週前與一月前為以 TradingView 表現欄位反推的估值。'),
+    document.createTextNode(` ${vixText}一週前與一月前為以 TradingView 表現欄位反推的估值。`),
   );
 }
 
 function renderBondCard() {
   const data = bondPoints();
   if (!data) return;
+  const vix = vixPoint();
   renderBondChart(data);
-  renderBondStats(data);
-  renderBondRead(data);
+  renderBondStats(data, vix);
+  renderBondRead(data, vix);
 }
 
 // ===== TradingView widget =====
@@ -860,7 +896,7 @@ function mountTradingView() {
           { s: 'NASDAQ:IXIC', d: '那斯達克' },
           { s: 'TVC:NI225', d: '日經 225' },
           { s: 'TVC:HSI', d: '恆生指數' },
-          { s: 'TWSE:IND', d: '台灣加權' },
+          { s: 'TWSE:IX0001', d: '台灣加權' },
           { s: 'XETR:DAX', d: '德國 DAX' },
         ],
       },
@@ -915,18 +951,6 @@ async function refreshFX() {
   }
 }
 
-async function refreshTaiex() {
-  try {
-    await fetchTaiex();
-    setStatus('dot-taiex', 'ts-taiex', true);
-  } catch (e) {
-    console.error('台股更新失敗:', e);
-    setStatus('dot-taiex', 'ts-taiex', false);
-  } finally {
-    renderAll();
-  }
-}
-
 async function refreshScanner() {
   try {
     await fetchScanner();
@@ -963,7 +987,7 @@ async function refreshCryptoHistory() {
 async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
-  await Promise.allSettled([refreshFX(), refreshTaiex(), refreshScanner()]);
+  await Promise.allSettled([refreshFX(), refreshScanner()]);
   await refreshCryptoHistory();
   btn.disabled = false;
 }
@@ -1025,7 +1049,6 @@ function main() {
 
   refreshAll();
   setInterval(refreshFX, FX_POLL_MS);
-  setInterval(refreshTaiex, TAIEX_POLL_MS);
   setInterval(refreshScanner, SCANNER_POLL_MS);
   setInterval(refreshCryptoHistory, HISTORY_POLL_MS);
 }

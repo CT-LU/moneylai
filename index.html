@@ -26,15 +26,24 @@
         <span id="ts-fx" class="ts">--</span>
       </div>
       <div class="status-line">
-        <span class="status-dot" id="dot-taiex" title="台股資料狀態"></span>台股資料
-        <span id="ts-taiex" class="ts">--</span>
-      </div>
-      <div class="status-line">
-        <span class="status-dot" id="dot-scanner" title="商品與債券報價狀態"></span>商品債券
+        <span class="status-dot" id="dot-scanner" title="商品、債券與 VIX 報價狀態"></span>商品債券
         <span id="ts-scanner" class="ts">--</span>
       </div>
     </div>
   </header>
+
+  <!-- ===== 股債趨勢(美債殖利率曲線 + VIX)===== -->
+  <section class="card" id="bond-card">
+    <div class="card-head">
+      <h2 class="card-title">股債趨勢</h2>
+    </div>
+    <p class="card-desc">債市看殖利率曲線:2 年(短天期,反映升降息預期)、10 年與 30 年(長天期,反映增長/通膨與資金避險),比較今天、一週前與一月前;股市看 VIX 波動率指數(恐慌溫度計)。兩者合讀,判斷資金在股債之間的避險/風險偏好切換。</p>
+    <div class="bond-layout">
+      <div id="bond-chart"></div>
+      <div class="bond-stats" id="bond-stats"></div>
+    </div>
+    <p class="bond-read" id="bond-read"></p>
+  </section>
 
   <!-- ===== 資產資金流向(近 N 週熱力圖)===== -->
   <section class="card" id="asset-card">
@@ -58,7 +67,7 @@
     <div id="asset-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="asset-legend"></div>
     <div id="asset-table" class="region-table" hidden></div>
-    <p class="card-footnote">原油、銅、綠能(ICLN)、AI(AIQ)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本頁跨日累積推算,啟用初期會顯示斜線格(資料累積中),約四週後補齊。</p>
+    <p class="card-footnote">原油(WTI/布蘭特)、銅、綠能(ICLN)、AI(AIQ)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本頁跨日累積推算,啟用初期會顯示白底斜線格(資料累積中),約四週後補齊。</p>
   </section>
 
   <!-- ===== 區域資金流向(近 N 週熱力圖)===== -->
@@ -83,19 +92,7 @@
     <div id="region-heatmap" class="heatmap-wrap"></div>
     <div class="hm-legend" id="region-legend"></div>
     <div id="region-table" class="region-table" hidden></div>
-  </section>
-
-  <!-- ===== 美債長短天期趨勢 ===== -->
-  <section class="card" id="bond-card">
-    <div class="card-head">
-      <h2 class="card-title">美債長短天期趨勢</h2>
-    </div>
-    <p class="card-desc">2 年(短天期,反映升降息預期)、10 年與 30 年(長天期,反映增長/通膨與資金避險)殖利率曲線:比較今天、一週前與一月前,看資金是湧入還是撤出債市、曲線在變陡還是變平。</p>
-    <div class="bond-layout">
-      <div id="bond-chart"></div>
-      <div class="bond-stats" id="bond-stats"></div>
-    </div>
-    <p class="bond-read" id="bond-read"></p>
+    <p class="card-footnote">台灣(美元兌台幣)的報價來自 TradingView(歐洲央行不提供台幣匯率),更早的逐週資料由本頁跨日累積推算,啟用初期會顯示白底斜線格,約四週後補齊。</p>
   </section>
 
   <!-- ===== TradingView 即時行情 ===== -->
@@ -110,9 +107,8 @@
   <footer class="page-footer">
     <p>資料來源:匯率 — <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter API</a>(歐洲央行,每個交易日更新一次)·
     加密貨幣與黃金(PAXG 代理)— <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每小時輪詢)·
-    台股 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日盤後)·
-    原油/銅/綠能/AI/美債殖利率 — TradingView 報價(每 2 分鐘輪詢)·
-    即時行情 — TradingView widget。</p>
+    原油(WTI/布蘭特)/銅/綠能/AI/美債殖利率/VIX/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
+    即時行情(含台灣加權)— TradingView widget。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>
 

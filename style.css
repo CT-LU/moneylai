@@ -256,7 +256,7 @@ section { margin-bottom: 34px; }
 
 .card-footnote { font-size: 12px; color: var(--text-muted); margin: 14px 0 0; }
 
-/* ===== 美債卡 ===== */
+/* ===== 股債趨勢卡(美債殖利率曲線 + VIX)===== */
 .bond-layout {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
@@ -289,6 +289,7 @@ section { margin-bottom: 34px; }
 .bond-stat .delta .period { color: var(--text-muted); }
 .bond-stat.inverted { background: var(--mem-yellow); color: #17141a; }
 .bond-stat.inverted .label, .bond-stat.inverted .delta .period { color: #4c4653; }
+.bond-stat.vix { grid-column: 1 / -1; }   /* VIX 盒橫跨整列,股債兩端一眼分清 */
 
 .bond-read { font-size: 13.5px; color: var(--text-secondary); margin: 14px 0 0; }
 .bond-read .bond-tag {
