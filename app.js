@@ -5,7 +5,10 @@
    資料源:
    - Frankfurter API(ECB 匯率,每交易日更新)→ 美元指數近似、USD/JPY、
      新興市場貨幣籃、區域資金流向
-   - CoinGecko free API → BTC、加密總市值、BTC 市佔率、黃金代理(PAXG)
+   - CoinGecko free API → BTC、加密總市值、BTC 市佔率、黃金代理(PAXG),
+     另用 market_chart 抓 BTC/ETH/黃金 15 日歷史做週對週比較
+   - TWSE rwd API → 台灣加權指數(每交易日盤後,本月 + 上月)
+   - TradingView scanner → 原油、銅、綠能 ETF、台股的即時報價與近一週表現
    - TradingView widget → DXY / 美債殖利率 / VIX / 各國股市即時報價
    原則:各資料源獨立抓取,單一來源失敗不影響其他區塊,
         重新抓取時保留前一次渲染(降透明度),不跳版。
@@ -36,8 +39,21 @@ const REGIONS = [
 
 const ALL_FX = [...new Set([...Object.keys(DXY_WEIGHTS), ...EM_BASKET, ...REGIONS.map(r => r.code)])];
 
+// TradingView scanner 資產(原油/銅/綠能/台股即時)。
+// 非官方 API,只能拿到即期價與近一週表現;「前週」靠 localStorage
+// 跨日累積推算(見 scannerPrevWeek),初期會缺值。
+const SCANNER_ASSETS = [
+  { sym: 'NYMEX:CL1!',   ep: 'futures', name: '原油 WTI' },
+  { sym: 'OANDA:XCUUSD', ep: 'global',  name: '銅(綠色通膨)' },
+  { sym: 'NASDAQ:ICLN',  ep: 'global',  name: '綠能股 ICLN' },
+  { sym: 'TWSE:IX0001',  ep: 'global',  name: '台灣加權(即時)' },
+];
+
 const CRYPTO_POLL_MS = 60 * 1000;        // CoinGecko 每 60 秒
 const FX_POLL_MS = 60 * 60 * 1000;       // ECB 一天更新一次,每小時輪詢即可
+const TAIEX_POLL_MS = 60 * 60 * 1000;    // TWSE 盤後資料,每小時輪詢即可
+const SCANNER_POLL_MS = 2 * 60 * 1000;   // scanner 非官方 API,保守輪詢
+const HISTORY_POLL_MS = 60 * 60 * 1000;  // 週對週比較用的歷史,每小時
 
 // ===== 全域狀態 =====
 const state = {
@@ -46,6 +62,9 @@ const state = {
   btc: null,        // CoinGecko markets 的 bitcoin 項目
   gold: null,       // pax-gold 項目(黃金代理)
   global: null,     // CoinGecko /global
+  taiex: [],        // TWSE 日收盤 [{ date, value, chg }]
+  scanner: null,    // { sym: { close, change, perfW } }
+  cryptoHist: null, // { coinId: [{ date, value }] } 15 日日收盤
 };
 
 // ===== 小工具 =====
@@ -82,8 +101,10 @@ function fmtBigUSD(n) {
 }
 
 function fmtPct(n, digits = 2) {
+  const fixed = n.toFixed(digits);
+  if (Number(fixed) === 0) return `${(0).toFixed(digits)}%`;  // 避免出現「-0.0%」
   const s = n > 0 ? '+' : '';
-  return `${s}${n.toFixed(digits)}%`;
+  return `${s}${fixed}%`;
 }
 
 function pctChange(from, to) { return (to / from - 1) * 100; }
@@ -148,6 +169,123 @@ async function fetchCrypto() {
   state.global = global.data || null;
 }
 
+// 台股加權指數:TWSE 市場成交資訊(抓本月 + 上月,足夠算 30 日走勢與週對週)
+async function fetchTaiex() {
+  const now = new Date();
+  const months = [new Date(now.getFullYear(), now.getMonth() - 1, 1), now];
+  const results = await Promise.all(months.map(d => {
+    const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}01`;
+    return fetch(`https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=${ym}&response=json`)
+      .then(r => { if (!r.ok) throw new Error(`TWSE ${r.status}`); return r.json(); });
+  }));
+  const rows = [];
+  for (const res of results) {
+    if (res.stat !== 'OK' || !Array.isArray(res.data)) continue;  // 月初可能尚無本月資料
+    for (const row of res.data) {
+      // 日期是民國年(115/07/01),數值含千分位逗號
+      const [y, m, d] = String(row[0]).split('/').map(Number);
+      const value = Number(String(row[4]).replace(/,/g, ''));
+      const chg = Number(String(row[5]).replace(/,/g, ''));
+      if (!Number.isFinite(value)) continue;
+      rows.push({
+        date: `${y + 1911}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+        value, chg,
+      });
+    }
+  }
+  rows.sort((a, b) => a.date.localeCompare(b.date));
+  if (!rows.length) throw new Error('TWSE 無資料');
+  state.taiex = rows;
+}
+
+// TradingView scanner:一次 POST 拿多檔報價(close、當日變化 %、近一週表現 %)
+async function fetchScanner() {
+  const groups = {};
+  for (const a of SCANNER_ASSETS) (groups[a.ep] ||= []).push(a.sym);
+  const lists = await Promise.all(Object.entries(groups).map(async ([ep, tickers]) => {
+    // 不設 Content-Type:維持「簡單請求」避免 CORS preflight
+    //(scanner 的 Access-Control-Allow-Headers 不含 content-type)
+    const res = await fetch(`https://scanner.tradingview.com/${ep}/scan`, {
+      method: 'POST',
+      body: JSON.stringify({
+        symbols: { tickers, query: { types: [] } },
+        columns: ['close', 'change', 'Perf.W'],
+      }),
+    });
+    if (!res.ok) throw new Error(`scanner ${res.status}`);
+    return (await res.json()).data || [];
+  }));
+  const out = {};
+  for (const item of lists.flat()) {
+    out[item.s] = { close: item.d[0], change: item.d[1], perfW: item.d[2] };
+  }
+  if (!Object.keys(out).length) throw new Error('scanner 無資料');
+  state.scanner = out;
+  recordScannerHistory();
+}
+
+// BTC / ETH / 黃金(PAXG)的 15 日歷史 → 換成日收盤,供週對週比較
+async function fetchCryptoHistory() {
+  const ids = ['bitcoin', 'ethereum', 'pax-gold'];
+  const lists = await Promise.all(ids.map(id =>
+    fetch(`https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=15`)
+      .then(r => { if (!r.ok) throw new Error(`CoinGecko ${r.status}`); return r.json(); })
+  ));
+  const hist = {};
+  ids.forEach((id, i) => {
+    const daily = new Map();   // 小時資料按 UTC 日取最後一筆 ≈ 日收盤
+    for (const [ms, price] of lists[i].prices || []) {
+      daily.set(new Date(ms).toISOString().slice(0, 10), price);
+    }
+    hist[id] = [...daily.entries()].map(([date, value]) => ({ date, value }));
+  });
+  state.cryptoHist = hist;
+}
+
+// ===== scanner 資產的「前週」:localStorage 跨日累積 =====
+// scanner 拿不到兩週前的價格,所以每次抓到資料就把「今天」與
+// 「用近一週表現反推的 7 天前」價格存起來;累積約一週後,
+// 「7 天前」的舊紀錄就成了「14 天前」,前週變化即可計算。
+const SCAN_HIST_KEY = 'moneylai-scanner-history';
+
+function loadScanHist() {
+  try { return JSON.parse(localStorage.getItem(SCAN_HIST_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function recordScannerHistory() {
+  const hist = loadScanHist();
+  const today = new Date();
+  for (const [sym, q] of Object.entries(state.scanner)) {
+    if (!Number.isFinite(q.close)) continue;
+    const h = (hist[sym] ||= {});
+    h[isoDate(today)] = q.close;
+    if (Number.isFinite(q.perfW)) {
+      h[isoDate(new Date(today.getTime() - 7 * 86400e3))] = q.close / (1 + q.perfW / 100);
+    }
+    for (const d of Object.keys(h)) {   // 只留 40 天
+      if (new Date(d).getTime() < today.getTime() - 40 * 86400e3) delete h[d];
+    }
+  }
+  try { localStorage.setItem(SCAN_HIST_KEY, JSON.stringify(hist)); }
+  catch { /* 隱私模式等寫入失敗,略過即可 */ }
+}
+
+function scannerPrevWeek(sym) {
+  const q = state.scanner?.[sym];
+  const h = loadScanHist()[sym];
+  if (!q || !h || !Number.isFinite(q.perfW) || !Number.isFinite(q.close)) return null;
+  const p7 = q.close / (1 + q.perfW / 100);
+  // 找最接近 14 天前(容差 ±3.5 天)的紀錄
+  const target = Date.now() - 14 * 86400e3;
+  let best = null, bestDiff = 3.5 * 86400e3;
+  for (const [d, v] of Object.entries(h)) {
+    const diff = Math.abs(new Date(d).getTime() - target);
+    if (diff < bestDiff) { best = v; bestDiff = diff; }
+  }
+  return best ? pctChange(best, p7) : null;
+}
+
 // ===== 衍生計算 =====
 
 // 由 ECB 匯率籃計算 DXY 近似值的時間序列
@@ -184,6 +322,78 @@ function regionChanges() {
     ...r,
     chg: (first[r.code] / last[r.code] - 1) * 100,
   })).sort((a, b) => b.chg - a.chg);
+}
+
+// ===== 資產週對週(本週 vs 前週)=====
+
+// 在日序列裡找最接近 target 時間(容差 ±4.5 天)的點
+function valueNear(series, targetMs) {
+  let best = null, bestDiff = 4.5 * 86400e3;
+  for (const p of series) {
+    const diff = Math.abs(new Date(p.date).getTime() - targetMs);
+    if (diff < bestDiff) { best = p; bestDiff = diff; }
+  }
+  return best;
+}
+
+// series: [{ date, value }] 升冪 → { thisW, prevW }(%,算不出來時為 null)
+function weeklyPair(series) {
+  if (!series || series.length < 6) return { thisW: null, prevW: null };
+  const last = series[series.length - 1];
+  const lastMs = new Date(last.date).getTime();
+  const p7 = valueNear(series.slice(0, -1), lastMs - 7 * 86400e3);
+  const p14 = p7 ? valueNear(series, lastMs - 14 * 86400e3) : null;
+  return {
+    thisW: p7 ? pctChange(p7.value, last.value) : null,
+    prevW: p7 && p14 && p14.date < p7.date ? pctChange(p14.value, p7.value) : null,
+  };
+}
+
+function toSeries(dates, values) {
+  return dates.map((d, i) => ({ date: d, value: values[i] }));
+}
+
+// 彙整所有資產的本週/前週漲跌(= 資金流入/流出的代理指標)
+function assetFlows() {
+  const flows = [];
+  const push = (name, pair, src) => {
+    if (pair.thisW === null) return;
+    flows.push({ name, thisW: pair.thisW, prevW: pair.prevW, src });
+  };
+
+  if (state.fxRates) {
+    push('美元(DXY 近似)', weeklyPair(toSeries(state.fxDates, dxySeries())), 'ECB 匯率');
+    // 反轉 USD/JPY 成「日圓的價值」:升 = 套利平倉、資金回流日圓
+    push('日圓(兌美元)', weeklyPair(toSeries(state.fxDates, fxSeries('JPY').map(v => 1 / v))), 'ECB 匯率');
+    push('新興市場貨幣籃', weeklyPair(toSeries(state.fxDates, emIndexSeries())), 'ECB 匯率');
+  }
+  if (state.taiex.length) {
+    push('台股加權指數', weeklyPair(state.taiex), 'TWSE');
+  }
+  if (state.cryptoHist) {
+    push('黃金(PAXG)', weeklyPair(state.cryptoHist['pax-gold']), 'CoinGecko');
+    push('比特幣', weeklyPair(state.cryptoHist['bitcoin']), 'CoinGecko');
+    push('以太幣', weeklyPair(state.cryptoHist['ethereum']), 'CoinGecko');
+  }
+  if (state.scanner) {
+    for (const a of SCANNER_ASSETS) {
+      if (a.sym === 'TWSE:IX0001') continue;   // 台股用 TWSE 官方歷史,不重複列
+      const q = state.scanner[a.sym];
+      if (!q || !Number.isFinite(q.perfW)) continue;
+      flows.push({ name: a.name, thisW: q.perfW, prevW: scannerPrevWeek(a.sym), src: 'TradingView' });
+    }
+  }
+  return flows.sort((a, b) => b.thisW - a.thisW);
+}
+
+// 資金動向的文字判讀:讓「錢往哪跑、停在哪」一眼可讀
+function flowVerdict(thisW, prevW) {
+  if (prevW === null) return Math.abs(thisW) < 0.3 ? '持平' : thisW > 0 ? '本週流入' : '本週流出';
+  if (Math.abs(thisW) < 0.3 && Math.abs(prevW) < 0.3) return '持平';
+  if (thisW > 0 && prevW <= 0) return '由流出轉流入';
+  if (thisW <= 0 && prevW > 0) return '由流入轉流出';
+  if (thisW > 0) return thisW > prevW ? '流入加速' : '流入放緩';
+  return thisW < prevW ? '流出加速' : '流出趨緩';
 }
 
 // ===== Sparkline(SVG 折線 + 10% 面積 + 端點)=====
@@ -314,6 +524,26 @@ function renderTiles() {
     }));
   }
 
+  // --- 台股 ---
+  const taiexRT = state.scanner?.['TWSE:IX0001'];
+  if (state.taiex.length || (taiexRT && Number.isFinite(taiexRT.close))) {
+    const hist = state.taiex;
+    const last = hist[hist.length - 1];
+    const value = Number.isFinite(taiexRT?.close) ? taiexRT.close : last.value;
+    const deltaPct = Number.isFinite(taiexRT?.change) ? taiexRT.change
+      : last ? last.chg / (last.value - last.chg) * 100 : null;
+    tiles.push(makeTile({
+      label: '台灣加權指數',
+      value: fmtNum(value, 0),
+      deltaPct,
+      deltaPeriod: '前一交易日',
+      spark: hist.length > 1
+        ? sparkline(hist.map(r => r.value), hist.map(r => r.date), v => fmtNum(v, 0))
+        : null,
+      note: taiexRT ? '即時報價;走勢圖為 TWSE 每日收盤' : 'TWSE 每交易日盤後更新',
+    }));
+  }
+
   // --- 加密貨幣類 ---
   if (state.btc) {
     const sparkVals = state.btc.sparkline_in_7d?.price || [];
@@ -360,6 +590,29 @@ function renderTiles() {
       spark: sparkVals.length ? sparkline(sparkVals, sparkDates, v => `$${fmtPrice(v)}`) : null,
       note: '升且股市跌 = 避險買盤進場',
     }));
+  }
+
+  // --- 商品與綠色轉型(TradingView scanner)---
+  if (state.scanner) {
+    const defs = [
+      { sym: 'NYMEX:CL1!',   label: '原油 WTI(期貨)', fmt: v => `$${fmtNum(v, 2, 2)}`,
+        note: '美元/桶,升 = 能源通膨壓力、資金進商品' },
+      { sym: 'OANDA:XCUUSD', label: '銅(綠色通膨)',   fmt: v => `$${fmtNum(v, 3, 2)}`,
+        note: '美元/磅,能源轉型關鍵金屬,升 = 綠色通膨升溫' },
+      { sym: 'NASDAQ:ICLN',  label: '綠能股 ICLN',      fmt: v => `$${fmtNum(v, 2, 2)}`,
+        note: 'iShares 全球乾淨能源 ETF,資金對綠能的偏好' },
+    ];
+    for (const d of defs) {
+      const q = state.scanner[d.sym];
+      if (!q || !Number.isFinite(q.close)) continue;
+      tiles.push(makeTile({
+        label: d.label,
+        value: d.fmt(q.close),
+        deltaPct: Number.isFinite(q.change) ? q.change : null,
+        deltaPeriod: '昨收',
+        note: d.note,
+      }));
+    }
   }
 
   if (tiles.length) grid.replaceChildren(...tiles);
@@ -466,6 +719,13 @@ function renderVerdict() {
     if (inflow.length) summary += `近 30 日資金傾向流入:${inflow.join('、')}。`;
     if (outflow.length) summary += `傾向流出:${outflow.join('、')}。`;
   }
+  const flows = assetFlows();
+  if (flows.length) {
+    const inflow = flows.filter(f => f.thisW > 0.3).slice(0, 3).map(f => f.name);
+    const outflow = flows.filter(f => f.thisW < -0.3).slice(-3).map(f => f.name);
+    if (inflow.length) summary += `本週資金停泊處:${inflow.join('、')}。`;
+    if (outflow.length) summary += `本週撤出:${outflow.join('、')}。`;
+  }
   $('#verdict-summary').textContent = summary;
 
   // 訊號清單
@@ -562,13 +822,110 @@ function renderRegions() {
   $('#region-table').replaceChildren(table);
 }
 
-// 圖表 / 表格切換
-function initViewToggle() {
-  const btnChart = $('#btn-chart-view');
-  const btnTable = $('#btn-table-view');
+// ===== 資產資金流向圖(本週 vs 前週,成對橫條)=====
+
+function renderAssetFlows() {
+  const flows = assetFlows();
+  if (!flows.length) return;
+  const maxAbs = Math.max(0.5, ...flows.flatMap(f => [Math.abs(f.thisW), Math.abs(f.prevW ?? 0)]));
+
+  // 單一橫條(本週實色 / 前週半透明);chg 為 null 時顯示「累積中」
+  const makeBar = (chg, isPrev, ttLines) => {
+    const track = el('div', 'flow-track slim');
+    track.appendChild(el('div', 'flow-center'));
+    if (chg === null) {
+      const na = el('span', 'flow-value na', '—(資料累積中)');
+      na.style.left = 'calc(50% + 6px)';
+      track.appendChild(na);
+      return track;
+    }
+    const widthPct = Math.abs(chg) / maxAbs * 42;
+    const pos = chg >= 0;
+    const bar = el('div', `flow-bar ${pos ? 'pos' : 'neg'}${isPrev ? ' prev' : ''}`);
+    bar.style.left = pos ? '50%' : `${50 - widthPct}%`;
+    bar.style.width = `${widthPct}%`;
+    bar.tabIndex = 0;
+    bar.appendChild(el('div', 'fill'));
+    bar.addEventListener('pointermove', (ev) => showTooltip(ttLines, ev.clientX, ev.clientY));
+    bar.addEventListener('pointerleave', hideTooltip);
+    bar.addEventListener('focus', () => {
+      const rect = bar.getBoundingClientRect();
+      showTooltip(ttLines, rect.right, rect.top);
+    });
+    bar.addEventListener('blur', hideTooltip);
+    track.appendChild(bar);
+
+    const val = el('span', 'flow-value', fmtPct(chg, 1));
+    if (pos) val.style.left = `calc(${50 + widthPct}% + 6px)`;
+    else val.style.right = `calc(${50 + widthPct}% + 6px)`;
+    track.appendChild(val);
+    return track;
+  };
+
+  const rows = flows.map(f => {
+    const row = el('div', 'flow-row asset');
+    row.appendChild(el('div', 'flow-name', f.name));
+
+    const ttLines = [
+      { value: `本週 ${fmtPct(f.thisW, 1)}` },
+      { label: `前週 ${f.prevW === null ? '—' : fmtPct(f.prevW, 1)}` },
+      { label: `${f.name}:${flowVerdict(f.thisW, f.prevW)}` },
+      { label: `資料源:${f.src}` },
+    ];
+
+    const pair = el('div', 'flow-pair');
+    const subThis = el('div', 'flow-sub');
+    subThis.appendChild(el('span', 'sub-label', '本週'));
+    subThis.appendChild(makeBar(f.thisW, false, ttLines));
+    const subPrev = el('div', 'flow-sub');
+    subPrev.appendChild(el('span', 'sub-label', '前週'));
+    subPrev.appendChild(makeBar(f.prevW, true, ttLines));
+    pair.appendChild(subThis);
+    pair.appendChild(subPrev);
+
+    row.appendChild(pair);
+    return row;
+  });
+
+  // 底部刻度(左側加上子標籤欄的位移)
+  const axis = el('div', 'flow-axis asset-axis');
+  axis.appendChild(el('div'));
+  const ticks = el('div', 'ticks');
+  ticks.appendChild(el('span', null, `-${maxAbs.toFixed(1)}%`));
+  ticks.appendChild(el('span', null, '0'));
+  ticks.appendChild(el('span', null, `+${maxAbs.toFixed(1)}%`));
+  axis.appendChild(ticks);
+
+  $('#asset-chart').replaceChildren(...rows, axis);
+
+  // --- 表格檢視(等價版本) ---
+  const table = el('table');
+  const thead = el('thead');
+  const hr = el('tr');
+  for (const h of ['資產', '本週', '前週', '資金動向', '資料源']) hr.appendChild(el('th', null, h));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = el('tbody');
+  for (const f of flows) {
+    const tr = el('tr');
+    tr.appendChild(el('td', null, f.name));
+    tr.appendChild(el('td', 'num', fmtPct(f.thisW)));
+    tr.appendChild(el('td', 'num', f.prevW === null ? '—' : fmtPct(f.prevW)));
+    tr.appendChild(el('td', null, flowVerdict(f.thisW, f.prevW)));
+    tr.appendChild(el('td', null, f.src));
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  $('#asset-table').replaceChildren(table);
+}
+
+// 圖表 / 表格切換(區域卡與資產卡共用)
+function initViewToggle(btnChartSel, btnTableSel, chartSel, tableSel) {
+  const btnChart = $(btnChartSel);
+  const btnTable = $(btnTableSel);
   const setView = (showTable) => {
-    $('#region-chart').hidden = showTable;
-    $('#region-table').hidden = !showTable;
+    $(chartSel).hidden = showTable;
+    $(tableSel).hidden = !showTable;
     btnChart.classList.toggle('active', !showTable);
     btnTable.classList.toggle('active', showTable);
     btnChart.setAttribute('aria-pressed', String(!showTable));
@@ -608,7 +965,7 @@ function mountTradingView() {
           { s: 'TVC:US02Y', d: '美債 2 年殖利率' },
           { s: 'TVC:GOLD', d: '黃金現貨' },
           { s: 'CBOE:VIX', d: 'VIX 恐慌指數' },
-          { s: 'TVC:USOIL', d: 'WTI 原油' },
+          { s: 'FX_IDC:USDTWD', d: '美元兌台幣' },
         ],
       },
       {
@@ -620,6 +977,18 @@ function mountTradingView() {
           { s: 'TVC:HSI', d: '恆生指數' },
           { s: 'TWSE:IND', d: '台灣加權' },
           { s: 'XETR:DAX', d: '德國 DAX' },
+        ],
+      },
+      {
+        title: '能源與綠色轉型',
+        symbols: [
+          { s: 'TVC:USOIL', d: 'WTI 原油' },
+          { s: 'TVC:UKOIL', d: '布蘭特原油' },
+          { s: 'CAPITALCOM:NATURALGAS', d: '天然氣' },
+          { s: 'CAPITALCOM:COPPER', d: '銅' },
+          { s: 'NASDAQ:ICLN', d: '全球綠能 ETF' },
+          { s: 'AMEX:TAN', d: '太陽能 ETF' },
+          { s: 'AMEX:LIT', d: '鋰電池 ETF' },
         ],
       },
     ],
@@ -634,6 +1003,7 @@ function renderAll() {
   renderTiles();
   renderVerdict();
   renderRegions();
+  renderAssetFlows();
 }
 
 async function refreshFX() {
@@ -647,6 +1017,49 @@ async function refreshFX() {
     setStatus('#dot-fx', '#ts-fx', false);
   } finally {
     card.classList.remove('refreshing');
+    renderAll();
+  }
+}
+
+async function refreshTaiex() {
+  try {
+    await fetchTaiex();
+    setStatus('#dot-taiex', '#ts-taiex', true);
+  } catch (err) {
+    console.error('台股資料抓取失敗:', err);
+    setStatus('#dot-taiex', '#ts-taiex', false);
+  } finally {
+    renderAll();
+  }
+}
+
+async function refreshScanner() {
+  try {
+    await fetchScanner();
+    setStatus('#dot-scanner', '#ts-scanner', true);
+  } catch (err) {
+    console.error('商品報價抓取失敗:', err);
+    setStatus('#dot-scanner', '#ts-scanner', false);
+  } finally {
+    renderAll();
+  }
+}
+
+let historyRetryTimer = null;
+
+// 加密歷史與即時報價共用 CoinGecko 額度:失敗(常見 429)時 45 秒後重試一次
+async function refreshCryptoHistory() {
+  try {
+    await fetchCryptoHistory();
+  } catch (err) {
+    console.error('加密歷史資料抓取失敗:', err);
+    if (!historyRetryTimer) {
+      historyRetryTimer = setTimeout(() => {
+        historyRetryTimer = null;
+        refreshCryptoHistory();
+      }, 45 * 1000);
+    }
+  } finally {
     renderAll();
   }
 }
@@ -675,19 +1088,25 @@ async function refreshCrypto() {
 async function refreshAll() {
   const btn = $('#refresh-btn');
   btn.disabled = true;
-  await Promise.allSettled([refreshFX(), refreshCrypto()]);
+  await Promise.allSettled([refreshFX(), refreshCrypto(), refreshTaiex(), refreshScanner()]);
+  // 加密歷史放在即時報價之後串行執行,避免同時打爆 CoinGecko 免費額度
+  await refreshCryptoHistory();
   btn.disabled = false;
 }
 
 // ===== 啟動 =====
 
 function main() {
-  initViewToggle();
+  initViewToggle('#btn-chart-view', '#btn-table-view', '#region-chart', '#region-table');
+  initViewToggle('#btn-asset-chart', '#btn-asset-table', '#asset-chart', '#asset-table');
   $('#refresh-btn').addEventListener('click', refreshAll);
 
   refreshAll();
   setInterval(refreshCrypto, CRYPTO_POLL_MS);
   setInterval(refreshFX, FX_POLL_MS);
+  setInterval(refreshTaiex, TAIEX_POLL_MS);
+  setInterval(refreshScanner, SCANNER_POLL_MS);
+  setInterval(refreshCryptoHistory, HISTORY_POLL_MS);
 
   mountTradingView();
   // 深淺色主題切換時重掛 TradingView(widget 的主題在載入時就固定了)

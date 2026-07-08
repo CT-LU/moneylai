@@ -25,6 +25,14 @@
         <span class="status-dot" id="dot-fx" title="匯率資料狀態"></span>匯率資料
         <span id="ts-fx" class="ts">--</span>
       </div>
+      <div class="status-line">
+        <span class="status-dot" id="dot-taiex" title="台股資料狀態"></span>台股資料
+        <span id="ts-taiex" class="ts">--</span>
+      </div>
+      <div class="status-line">
+        <span class="status-dot" id="dot-scanner" title="商品報價狀態"></span>商品報價
+        <span id="ts-scanner" class="ts">--</span>
+      </div>
     </div>
   </header>
 
@@ -60,6 +68,27 @@
     </div>
   </section>
 
+  <!-- ===== 資產資金流向(本週 vs 前週)===== -->
+  <section class="card" id="asset-card">
+    <div class="card-head">
+      <div>
+        <h2>資產資金流向(本週 vs 前週)</h2>
+        <p class="card-desc">各類資產近一週與前一週的漲跌對照:實色為本週、半透明為前週,兩條並看就能看出資金往哪裡移動、目前停在哪裡。</p>
+      </div>
+      <div class="view-toggle" role="tablist">
+        <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">圖表</button>
+        <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
+      </div>
+    </div>
+    <div class="flow-legend">
+      <span class="key"><span class="swatch swatch-in"></span>上漲(資金流入傾向)</span>
+      <span class="key"><span class="swatch swatch-out"></span>下跌(資金流出傾向)</span>
+    </div>
+    <div id="asset-chart" class="region-chart"></div>
+    <div id="asset-table" class="region-table" hidden></div>
+    <p class="card-footnote">原油、銅、綠能的報價來自 TradingView,該來源僅提供近一週表現;「前週」由本頁跨日累積推算,啟用初期會顯示「—(資料累積中)」,約一週後補齊。</p>
+  </section>
+
   <!-- ===== 區域資金流向 ===== -->
   <section class="card" id="region-card">
     <div class="card-head">
@@ -90,6 +119,8 @@
   <footer class="page-footer">
     <p>資料來源:匯率 — <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter API</a>(歐洲央行,每個交易日更新一次)·
     加密貨幣 — <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每 60 秒輪詢)·
+    台股 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日盤後)·
+    原油/銅/綠能 — TradingView 報價(每 2 分鐘輪詢)·
     即時行情 — TradingView widget。黃金以 PAXG(黃金代幣)價格作為代理。</p>
     <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
   </footer>

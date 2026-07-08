@@ -264,6 +264,28 @@ section { margin-bottom: 28px; }
 }
 .flow-axis .ticks { display: flex; justify-content: space-between; padding-top: 4px; }
 
+/* ===== 資產資金流向:本週 / 前週成對橫條 ===== */
+.flow-row.asset { padding: 6px 0; }
+.flow-pair { display: grid; gap: 2px; }
+.flow-sub {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 6px;
+  align-items: center;
+}
+.sub-label { font-size: 10.5px; color: var(--text-muted); text-align: right; }
+/* 成對條較細:命中區 20px、實條 12px */
+.flow-track.slim { height: 20px; }
+.flow-track.slim .flow-bar { height: 20px; }
+.flow-track.slim .flow-bar .fill { top: 4px; bottom: 4px; }
+/* 前週條:同色系半透明(顏色仍照漲跌,透明度區分期間) */
+.flow-bar.prev .fill { opacity: 0.45; }
+.flow-value.na { color: var(--text-muted); }
+/* 資產卡刻度:左移補上子標籤欄的寬度 */
+.flow-axis.asset-axis .ticks { margin-left: 40px; }
+
+.card-footnote { font-size: 12px; color: var(--text-muted); margin: 12px 0 0; }
+
 /* 圖表/表格切換 */
 .view-toggle { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; align-self: flex-start; }
 .view-toggle button {
