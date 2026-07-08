@@ -859,6 +859,16 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
     .interpolate(d3.interpolateLab)
     .clamp(true);
 
+  // 每週名次(輪動語意):該週有資料的列依當前色階值由高到低排;
+  // 列序本身就是依「選中排序週」的同一套值排的,所以 hover 列的名次線
+  // 在排序欄必然穿過它自己的格子——疊加線有視覺錨點
+  const rankAt = new Map(rows.map(r => [r.name, Array(nWeeks).fill(null)]));
+  for (let j = 0; j < nWeeks; j++) {
+    const wk = rows.filter(r => cellVal(r.cells[j]) !== null)
+      .sort((a, b) => cellVal(b.cells[j]) - cellVal(a.cells[j]));
+    wk.forEach((r, i) => { rankAt.get(r.name)[j] = { rank: i + 1, of: wk.length }; });
+  }
+
   // svg 骨架持久化:同一骨架下切換排序週,列的位移才做得了 transition;
   // 版面參數變了(改觀察期間、列數增減、視窗寬度變)才整棵重建
   const sig = `${width}|${nWeeks}|${rows.length}`;
@@ -873,9 +883,12 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .attr('stroke-width', 1.4).attr('opacity', 0.6);
     svg.append('g').attr('class', 'hm-cols');
     svg.append('g').attr('class', 'hm-rows');
+    // 名次疊加線的畫布:最上層、不吃滑鼠事件(格子的 tooltip/點擊照常)
+    svg.append('g').attr('class', 'hm-overlay').attr('pointer-events', 'none');
     container.replaceChildren(svg.node());
   }
   svg.attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+  svg.select('g.hm-overlay').selectAll('*').remove();   // 重繪時清掉殘留的疊加線
   // 格紋顏色每次同步(跟著深淺色主題)
   svg.select(`#${patId} rect`).attr('fill', surface);
   svg.select(`#${patId} line`).attr('stroke', cMuted);
@@ -952,9 +965,47 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
   rowSel.transition().duration(500).ease(d3.easeCubicInOut)
     .attr('transform', d => `translate(0,${rowY.get(d.name)})`);
 
+  // hover 列 → 疊加該項的名次軌跡線(輪動圖合併進熱力圖):
+  // x=各週欄中心、y=該週名次對應的列位;其餘列淡出讓格網退成背景。
+  // 白色 casing 讓墨線壓在任何 diverging 格色上都讀得到;節點色=該週幅度(同一套色階)
+  const overlay = svg.select('g.hm-overlay');
+  const rankLine = d3.line()
+    .defined(p => p !== null)
+    .x(p => colX(p.j) + Math.max(2, cellW) / 2)
+    .y(p => headerH + (p.rank - 1) * rowH + cellH / 2)
+    .curve(d3.curveBumpX);   // 名次間的平滑水平過渡,輪動圖的標準曲線
+  const clearRankLine = () => {
+    overlay.selectAll('*').remove();
+    svg.selectAll('g.hm-row').attr('opacity', 1);
+  };
+  const showRankLine = (row) => {
+    clearRankLine();
+    const pts = rankAt.get(row.name).map((rk, j) =>
+      rk ? { j, rank: rk.rank, v: cellVal(row.cells[j]) } : null);
+    if (!pts.some(Boolean)) return;
+    svg.selectAll('g.hm-row').attr('opacity', d => d.name === row.name ? 1 : 0.25);
+    overlay.append('path')
+      .attr('d', rankLine(pts))
+      .attr('fill', 'none').attr('stroke', surface).attr('stroke-width', 7);
+    overlay.append('path')
+      .attr('d', rankLine(pts))
+      .attr('fill', 'none').attr('stroke', ink).attr('stroke-width', 2.5);
+    for (const p of pts) {
+      if (!p) continue;
+      overlay.append('circle')
+        .attr('cx', colX(p.j) + Math.max(2, cellW) / 2)
+        .attr('cy', headerH + (p.rank - 1) * rowH + cellH / 2)
+        .attr('r', 4.5)
+        .attr('fill', color(p.v)).attr('stroke', ink).attr('stroke-width', 1.4);
+    }
+  };
+
   rowEnter.merge(rowSel).each(function (row) {
     const g = d3.select(this);
     g.selectAll('*').remove();
+    g.attr('opacity', 1)   // 洗掉上一輪 hover 殘留的淡出狀態(g 跨 render 存活)
+      .on('mouseenter', () => showRankLine(row))
+      .on('mouseleave', clearRankLine);
     g.append('text')
       .attr('x', labelW - 10)
       .attr('y', cellH / 2 + 4)
@@ -983,12 +1034,15 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
           : '今日量比 —(此標的無量能資料)',
         cls: 'tt-label',
       }] : [];
+      // 該週名次(疊加線的 y 語意):tooltip 一律標示,不只在 hover 疊加時
+      const rk = rankAt.get(row.name)[j];
       rect.on('mouseenter mousemove', (ev) => {
         showTooltip([
           { text: `${row.name} · ${weekLabel(j, nWeeks)}`, cls: 'tt-label' },
           { text: `${cell.from} → ${cell.to}` , cls: 'tt-label' },
           { text: cell.pct === null ? '—(資料累積中)'
             : useZ ? `${fmtPct(cell.pct)}(${fmtZ(cell.z)})` : fmtPct(cell.pct), cls: 'tt-value' },
+          ...(rk ? [{ text: `該週第 ${rk.rank} 名(共 ${rk.of} 項)`, cls: 'tt-label' }] : []),
           ...volLines,
           { text: '點擊:依此週排序', cls: 'tt-label' },
         ], ev.clientX, ev.clientY);
@@ -1089,160 +1143,6 @@ function renderFlowTable(sel, rows, nWeeks, headLabel, withSrc) {
   wrap.replaceChildren(table);
 }
 
-// ===== 輪動圖(bump chart)=====
-// 每列每週算名次(依當前色階的值,與熱力圖排序語意一致),名次連成線;
-// 線的交叉 = 資金在資產/區域間搬家:往上竄 = 錢湧向它、往下沉 = 錢離開它。
-// 位置=名次(序)、節點顏色=該週幅度(沿用熱力圖 diverging 色階),兩檢視語彙一致
-function renderBumpChart(containerSel, legendSel, rows, nWeeks, useZ) {
-  const container = $(containerSel);
-  if (!rows.length) { container.replaceChildren(); return; }
-
-  // 每週名次:該週有資料的列依值由高到低排;無資料的週不參與(線在該週斷開)
-  const val = (r, j) => (useZ ? r.cells[j]?.z : r.cells[j]?.pct) ?? null;
-  const series = rows.map(r => ({ row: r, pts: Array(nWeeks).fill(null) }));
-  for (let j = 0; j < nWeeks; j++) {
-    const wk = series.filter(s => val(s.row, j) !== null)
-      .sort((a, b) => val(b.row, j) - val(a.row, j));
-    wk.forEach((s, i) => {
-      const c = s.row.cells[j];
-      s.pts[j] = { j, rank: i + 1, v: val(s.row, j), pct: c.pct, z: c.z, from: c.from, to: c.to, of: wk.length };
-    });
-  }
-  const drawn = series.filter(s => s.pts.some(Boolean));
-  if (!drawn.length) { container.replaceChildren(); return; }
-
-  const width = Math.max(320, container.clientWidth || 800);
-  const labelW = Math.min(132, Math.max(88, Math.round(width * 0.16)));
-  const headerH = 22, rowH = 30;
-  const height = headerH + rows.length * rowH + 6;
-  const stepW = (width - 2 * labelW) / nWeeks;
-  const x = (j) => labelW + (j + 0.5) * stepW;
-  const y = (rank) => headerH + (rank - 0.5) * rowH;
-
-  const ink = cssVar('--ink');
-  const cIn = cssVar('--series-in');
-  const cOut = cssVar('--series-out');
-  const cMid = cssVar('--neutral-mid');
-  const cText = cssVar('--text-primary');
-  const cSub = cssVar('--text-secondary');
-  const cMuted = cssVar('--text-muted');
-
-  const absVals = drawn.flatMap(s => s.pts.filter(Boolean).map(p => Math.abs(p.v)));
-  const maxAbs = useZ ? 2.5 : Math.min(8, Math.max(1.5, d3.max(absVals) ?? 1.5));
-  const color = d3.scaleLinear().domain([-maxAbs, 0, maxAbs])
-    .range([cOut, cMid, cIn]).interpolate(d3.interpolateLab).clamp(true);
-
-  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
-
-  // 欄標(週)與淡欄輔助線;窄格隔一標一,本週永遠標
-  const labelEvery = stepW >= 34 ? 1 : 2;
-  for (let j = 0; j < nWeeks; j++) {
-    const ago = nWeeks - 1 - j;
-    const isLast = j === nWeeks - 1;
-    svg.append('line')
-      .attr('x1', x(j)).attr('x2', x(j))
-      .attr('y1', headerH).attr('y2', height - 4)
-      .attr('stroke', cMuted).attr('stroke-width', 1).attr('opacity', 0.18);
-    if (isLast || ago % labelEvery === 0) {
-      svg.append('text')
-        .attr('x', x(j)).attr('y', headerH - 8)
-        .attr('text-anchor', 'middle').attr('font-size', 11)
-        .attr('font-weight', isLast ? 800 : 400)
-        .attr('fill', isLast ? cText : cMuted)
-        .text(weekLabel(j, nWeeks));
-    }
-  }
-
-  const line = d3.line()
-    .defined(p => p !== null)
-    .x(p => x(p.j)).y(p => y(p.rank))
-    .curve(d3.curveBumpX);   // 名次間的平滑水平過渡,輪動圖的標準曲線
-
-  // hover 聚焦:選中的列線變墨色加粗,其餘整組淡出
-  const groups = [];
-  const setFocus = (target) => {
-    for (const { g, s } of groups) {
-      g.attr('opacity', target === null || s === target ? 1 : 0.22);
-      g.select('path.bump-line')
-        .attr('stroke', s === target ? ink : cMuted)
-        .attr('stroke-width', s === target ? 3 : 2)
-        .attr('opacity', s === target ? 1 : 0.6);
-    }
-  };
-
-  for (const s of drawn) {
-    const g = svg.append('g').attr('class', 'bump-row');
-    groups.push({ g, s });
-    g.append('path').attr('class', 'bump-line')
-      .attr('d', line(s.pts))
-      .attr('fill', 'none').attr('stroke', cMuted)
-      .attr('stroke-width', 2).attr('opacity', 0.6);
-    s.pts.forEach(p => {
-      if (!p) return;
-      g.append('circle')
-        .attr('cx', x(p.j)).attr('cy', y(p.rank)).attr('r', 4)
-        .attr('fill', color(p.v)).attr('stroke', ink).attr('stroke-width', 1.2)
-        .attr('pointer-events', 'none');
-    });
-    // 兩端直接標籤:左=最舊週名次位、右=本週名次位(該週無資料就不標,避免重疊)
-    const first = s.pts[0], last = s.pts[nWeeks - 1];
-    if (first) {
-      g.append('text')
-        .attr('x', labelW - 10).attr('y', y(first.rank) + 4)
-        .attr('text-anchor', 'end').attr('font-size', 12.5).attr('fill', cSub)
-        .text(s.row.name);
-    }
-    if (last) {
-      g.append('text')
-        .attr('x', width - labelW + 10).attr('y', y(last.rank) + 4)
-        .attr('font-size', 12.5).attr('fill', cSub)
-        .text(s.row.name);
-    }
-    // 透明加寬的命中線:整條線都好指,tooltip 顯示最近一週的節點資訊
-    g.append('path')
-      .attr('d', line(s.pts))
-      .attr('fill', 'none').attr('stroke', 'transparent').attr('stroke-width', 14)
-      .attr('cursor', 'pointer')
-      .on('mousemove', (ev) => {
-        const [mx] = d3.pointer(ev, svg.node());
-        let best = null, bd = Infinity;
-        for (const p of s.pts) {
-          if (!p) continue;
-          const d = Math.abs(x(p.j) - mx);
-          if (d < bd) { bd = d; best = p; }
-        }
-        if (!best) return;
-        showTooltip([
-          { text: `${s.row.name} · ${weekLabel(best.j, nWeeks)}`, cls: 'tt-label' },
-          { text: `${best.from} → ${best.to}`, cls: 'tt-label' },
-          { text: `第 ${best.rank} 名(共 ${best.of} 項)`, cls: 'tt-value' },
-          { text: useZ ? `${fmtPct(best.pct)}(${fmtZ(best.z)})` : fmtPct(best.pct), cls: 'tt-label' },
-        ], ev.clientX, ev.clientY);
-      });
-    g.on('mouseenter', () => setFocus(s))
-      .on('mouseleave', () => { setFocus(null); hideTooltip(); });
-  }
-
-  container.replaceChildren(svg.node());
-
-  // 圖例:名次語意 + 節點色階(與熱力圖同一把尺)
-  const legend = $(legendSel);
-  const lw = 170, lh = 14;
-  const lsvg = d3.create('svg').attr('width', lw).attr('height', lh).attr('viewBox', `0 0 ${lw} ${lh}`);
-  const gradId = `${containerSel.slice(1)}-grad`;
-  const grad = lsvg.append('defs').append('linearGradient').attr('id', gradId);
-  [[0, -maxAbs], [0.5, 0], [1, maxAbs]].forEach(([o, v]) =>
-    grad.append('stop').attr('offset', `${o * 100}%`).attr('stop-color', color(v)));
-  lsvg.append('rect').attr('x', 1).attr('y', 1).attr('width', lw - 2).attr('height', lh - 2)
-    .attr('rx', 4).attr('fill', `url(#${gradId})`).attr('stroke', ink).attr('stroke-width', 1.4);
-  legend.replaceChildren(
-    el('span', '', '高低=該週名次(最上=最強)・點色:'),
-    el('span', '', useZ ? `−${maxAbs}σ(流出)` : `${fmtPct(-maxAbs, 1)}(流出)`),
-    lsvg.node(),
-    el('span', '', useZ ? `+${maxAbs}σ(流入)` : `${fmtPct(maxAbs, 1)}(流入)`),
-  );
-}
-
 // 卡內摘要:本週方向翻轉的列(由流出轉流入/由流入轉流出)——翻轉比持續更值得注意
 function flipSummary(rows) {
   const toIn = [], toOut = [];
@@ -1305,8 +1205,6 @@ function renderAssetCard() {
   if (ui.assetView === 'chart') {
     renderHeatmap('#asset-heatmap', '#asset-legend', sorted, ui.assetWeeks, 'hatch-asset',
       ui.assetSortAgo, (k) => { ui.assetSortAgo = k; renderAssetCard(); }, useZ);
-  } else if (ui.assetView === 'bump') {
-    renderBumpChart('#asset-bump', '#asset-legend', sorted, ui.assetWeeks, useZ);
   } else {
     renderFlowTable('#asset-table', sorted, ui.assetWeeks, '資產', true);
   }
@@ -1324,8 +1222,6 @@ function renderRegionCard() {
   if (ui.regionView === 'chart') {
     renderHeatmap('#region-heatmap', '#region-legend', sorted, ui.regionWeeks, 'hatch-region',
       ui.regionSortAgo, (k) => { ui.regionSortAgo = k; renderRegionCard(); }, useZ);
-  } else if (ui.regionView === 'bump') {
-    renderBumpChart('#region-bump', '#region-legend', sorted, ui.regionWeeks, useZ);
   } else {
     renderFlowTable('#region-table', sorted, ui.regionWeeks, '區域', false);
   }
@@ -2724,7 +2620,7 @@ function initScaleToggle(sel, key, rerender) {
   });
 }
 
-// 檢視切換(熱力圖/輪動/表格):defs = [{ btn, view, panels }],panels = 該檢視顯示的元素
+// 檢視切換(熱力圖/表格):defs = [{ btn, view, panels }],panels = 該檢視顯示的元素
 //(#*-legend 可同時掛在多個檢視下,由當前檢視的 render 負責填內容)
 function initViewToggle(defs, viewKey, rerender) {
   const allPanels = [...new Set(defs.flatMap(d => d.panels))];
@@ -2752,12 +2648,10 @@ function main() {
   initScaleToggle('#region-scale', 'regionScale', renderRegionCard);
   initViewToggle([
     { btn: '#btn-asset-chart', view: 'chart', panels: ['#asset-heatmap', '#asset-legend'] },
-    { btn: '#btn-asset-bump',  view: 'bump',  panels: ['#asset-bump', '#asset-legend'] },
     { btn: '#btn-asset-table', view: 'table', panels: ['#asset-table'] },
   ], 'assetView', renderAssetCard);
   initViewToggle([
     { btn: '#btn-region-chart', view: 'chart', panels: ['#region-heatmap', '#region-legend'] },
-    { btn: '#btn-region-bump',  view: 'bump',  panels: ['#region-bump', '#region-legend'] },
     { btn: '#btn-region-table', view: 'table', panels: ['#region-table'] },
   ], 'regionView', renderRegionCard);
 
