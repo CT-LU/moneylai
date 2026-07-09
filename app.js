@@ -1300,11 +1300,13 @@ function renderAssetCard() {
   if (!rows.length) return;
   // 摘要固定用「最新一欄」語意(用按最新欄排序的複本算),不隨排序欄改變
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
-  $('#asset-summary').textContent =
-    (daily
-      ? flowSummary(byLatest, '今日資金停泊處', '今日撤出', '今日各項變動有限,資金呈觀望。') + flipSummary(rows, '今日')
-      : flowSummary(byLatest, '本週資金停泊處', '本週撤出') + flipSummary(rows)) +
-    oilSpreadText() + copperGoldText();
+  setRead($('#asset-summary'), daily ? '今日流向' : '本週流向', [
+    daily
+      ? flowSummary(byLatest, '今日資金停泊處', '今日撤出', '今日各項變動有限,資金呈觀望。')
+      : flowSummary(byLatest, '本週資金停泊處', '本週撤出'),
+    flipSummary(rows, daily ? '今日' : '本週'),
+    copperGoldText(),
+  ], oilSpreadText());
   if (ui.assetSortAgo > nCols - 1) ui.assetSortAgo = 0;  // 切短觀察期間時,超出範圍的排序欄回到最新
   const useZ = ui.assetScale === 'z';
   const sorted = sortRowsByWeek(rows, nCols, ui.assetSortAgo, useZ);
@@ -1322,9 +1324,12 @@ function renderRegionCard() {
   const rows = regionRows(nCols, daily);
   if (!rows.length) return;
   const byLatest = [...rows].sort((a, b) => (b.latest ?? -Infinity) - (a.latest ?? -Infinity));
-  $('#region-summary').textContent = daily
-    ? flowSummary(byLatest, '今日資金傾向流入', '傾向流出', '今日各項變動有限,資金呈觀望。') + flipSummary(rows, '今日')
-    : flowSummary(byLatest, '近一週資金傾向流入', '傾向流出') + flipSummary(rows);
+  setRead($('#region-summary'), daily ? '今日流向' : '本週流向', [
+    daily
+      ? flowSummary(byLatest, '今日資金傾向流入', '傾向流出', '今日各項變動有限,資金呈觀望。')
+      : flowSummary(byLatest, '近一週資金傾向流入', '傾向流出'),
+    flipSummary(rows, daily ? '今日' : '本週'),
+  ]);
   if (ui.regionSortAgo > nCols - 1) ui.regionSortAgo = 0;
   const useZ = ui.regionScale === 'z';
   const sorted = sortRowsByWeek(rows, nCols, ui.regionSortAgo, useZ);
