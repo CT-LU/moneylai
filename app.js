@@ -44,8 +44,11 @@ const REGIONS = [
   { code: 'ZAR', name: '南非',   pair: 'USD/ZAR' },
 ];
 
-// 台灣列:美元兌台幣(scanner 即時報價,舊週格靠 localStorage 跨日累積)
-const TWD_REGION = { sym: 'FX_IDC:USDTWD', name: '台灣', pair: 'USD/TWD' };
+// ECB 沒有的區域貨幣(台灣、越南):走 scanner 即時報價,
+// 舊欄靠 localStorage/每日快照跨日累積(初期會缺格)
+const TWD_REGION = { sym: 'FX_IDC:USDTWD', name: '台灣', pair: 'USD/TWD', usdName: '美元兌台幣' };
+const VND_REGION = { sym: 'FX_IDC:USDVND', name: '越南', pair: 'USD/VND', usdName: '美元兌越南盾' };
+const SCANNER_REGIONS = [TWD_REGION, VND_REGION];
 
 const ALL_FX = [...new Set([...Object.keys(DXY_WEIGHTS), ...EM_BASKET, ...REGIONS.map(r => r.code)])];
 
@@ -100,7 +103,7 @@ const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
   { sym: VIX_SYM, ep: 'global', name: 'VIX' },
-  { sym: TWD_REGION.sym, ep: 'global', name: '美元兌台幣' },
+  ...SCANNER_REGIONS.map(r => ({ sym: r.sym, ep: 'global', name: r.usdName })),
   { sym: JP10Y_SYM, ep: 'global', name: '日債 10 年' },
   { sym: GOLD_SYM,  ep: 'global', name: '黃金現貨' },
   { sym: HYG_SYM,   ep: 'global', name: '高收益債 HYG' },
@@ -882,17 +885,18 @@ function regionRows(nCols, daily = false) {
       rows.push({ name: r.name, src: r.pair, cells: cut(series), sigma: sig(series) });
     }
   }
-  // 台灣:ECB 沒有 TWD,改用 scanner 的美元兌台幣(取倒數 = 台幣價值)
-  const twdSeries = scannerSeries(TWD_REGION.sym)
-    .map(p => ({ date: p.date, value: 1 / p.value }));
-  if (twdSeries.length >= 2) {
-    const cells = cut(twdSeries);
+  // 台灣、越南:ECB 沒有 TWD/VND,改用 scanner 的美元兌該幣(取倒數 = 該幣價值)
+  for (const r of SCANNER_REGIONS) {
+    const series = scannerSeries(r.sym)
+      .map(p => ({ date: p.date, value: 1 / p.value }));
+    if (series.length < 2) continue;
+    const cells = cut(series);
     if (daily) {
       const last = cells[cells.length - 1];
       // 序列取了倒數,今日漲跌方向要跟著反轉
-      if (last.pct === null) last.pct = scannerTodayPct(TWD_REGION.sym, true);
+      if (last.pct === null) last.pct = scannerTodayPct(r.sym, true);
     }
-    rows.push({ name: TWD_REGION.name, src: TWD_REGION.pair, cells, sigma: sig(twdSeries) });
+    rows.push({ name: r.name, src: r.pair, cells, sigma: sig(series) });
   }
   for (const r of rows) r.latest = r.cells[r.cells.length - 1]?.pct ?? null;
   attachZ(rows);

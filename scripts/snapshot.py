@@ -28,6 +28,7 @@ GLOBAL = [
     'TVC:US30Y',       # 美債 30 年
     'TVC:VIX',         # VIX
     'FX_IDC:USDTWD',   # 美元兌台幣
+    'FX_IDC:USDVND',   # 美元兌越南盾(區域卡越南列)
     'TVC:JP10Y',       # 日債 10 年(美日利差)
     'TVC:GOLD',        # 黃金現貨(銅金比)
     'AMEX:HYG',        # 高收益債
