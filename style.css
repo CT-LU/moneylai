@@ -383,6 +383,24 @@ section { margin-bottom: 34px; }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
 .twd-box .twd-swatch { width: 10px; height: 10px; }
 
+/* 即時報價跳動時的閃爍:數字盒閃黃底、折線即時端點閃爍
+   (只在值真的變動時觸發;元素每次重繪都是新節點,動畫自然重播) */
+.macro-head .value.flash {
+  border-radius: 6px;
+  animation: live-flash 1.4s ease-out 1;
+}
+@keyframes live-flash {
+  0%, 35% { background: var(--mem-yellow); box-shadow: 0 0 0 3px var(--mem-yellow); }
+  100%    { background: transparent;       box-shadow: 0 0 0 3px transparent; }
+}
+.twd-chart circle.live-dot.flash { animation: live-dot-flash 1.4s ease-out 1; }
+@keyframes live-dot-flash {
+  0%, 20%  { opacity: 0; }
+  30%, 45% { opacity: 1; }
+  55%, 70% { opacity: 0; }
+  80%      { opacity: 1; }
+}
+
 /* 卡頭數字盒的「即時」小標(scanner 即時交叉價;無 scanner 資料時不顯示)
    黃底固定配深墨字,深淺模式皆足夠對比 */
 .live-tag {

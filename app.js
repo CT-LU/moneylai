@@ -1835,13 +1835,28 @@ function twdLiveRates() {
 // 折線點的時間:即時點帶 t(毫秒),歷史日更點只有日期字串
 const twdPtMs = (p) => p.t ?? new Date(p.date).getTime();
 
+// 上一輪即時交叉價:比對哪幾種貨幣的報價有跳動,跳動的才閃爍
+//(renderAll 由多個資料源觸發,若每次重繪都閃會變成噪音)
+let twdPrevLive = null;
+
+function twdChangedCodes(live) {
+  const changed = new Set();
+  if (live && twdPrevLive) {
+    for (const { code } of TWDFX_CURRENCIES) {
+      if (live[code] !== twdPrevLive[code]) changed.add(code);
+    }
+  }
+  if (live) twdPrevLive = live;
+  return changed;
+}
+
 // 卡頭四個數字盒:1 單位外幣 = 多少台幣 + 一週變化(匯率升 = 台幣貶)
-// 有 scanner 即時交叉價時優先顯示(標「即時」),沒有才退回日更最新值
-function renderTwdStats(series) {
+// 有 scanner 即時交叉價時優先顯示(標「即時」),沒有才退回日更最新值;
+// changed = 本輪報價有跳動的貨幣,數字閃一下黃底讓更新看得見
+function renderTwdStats(series, live, changed) {
   const grid = $('#twd-stats');
   const latest = series[series.length - 1];
   const latestMs = new Date(latest.date).getTime();
-  const live = twdLiveRates();
   const boxes = TWDFX_CURRENCIES.map((c) => {
     const cur = live ? live[c.code] : latest[c.code];
     const box = el('div', 'macro-box twd-box');
@@ -1852,7 +1867,8 @@ function renderTwdStats(series) {
     label.appendChild(document.createTextNode(`1 ${c.name}`));
     if (live) label.appendChild(el('span', 'live-tag', '即時'));
     head.appendChild(label);
-    head.appendChild(el('span', 'value', `${fmtTwdRate(cur, c.digits)} 台幣`));
+    head.appendChild(el('span', `value${changed.has(c.code) ? ' flash' : ''}`,
+      `${fmtTwdRate(cur, c.digits)} 台幣`));
 
     // 一週變化:匯率漲 = 要花更多台幣 = 台幣走貶
     const one = toSeries(series.map(p => p.date), series.map(p => p[c.code]));
@@ -1870,7 +1886,8 @@ function renderTwdStats(series) {
 }
 
 // 指數化多線圖:期初 = 100,線往上 = 要花更多台幣換 1 單位外幣 = 台幣走貶
-function renderTwdChart(win) {
+// changed = 本輪即時報價有跳動的貨幣,對應線的即時端點閃一下
+function renderTwdChart(win, changed = new Set()) {
   const container = $('#twd-chart');
   const width = Math.max(320, container.clientWidth || 640);
   const height = 260;
@@ -1889,6 +1906,7 @@ function renderTwdChart(win) {
     pts: win.map(p => ({
       date: p.date,
       t: twdPtMs(p),
+      live: !!p.live,
       rate: p[c.code],
       idx: p[c.code] / win[0][c.code] * 100,
     })),
@@ -1943,9 +1961,11 @@ function renderTwdChart(win) {
       .attr('stroke-linecap', 'round')
       .attr('stroke-linejoin', 'round');
     for (const p of l.pts) {
+      // 即時端點放大,報價跳動時閃爍(class 由 CSS 動畫接手)
       svg.append('circle')
-        .attr('cx', x(p.t)).attr('cy', y(p.idx)).attr('r', 2.6)
-        .attr('fill', l.hex).attr('stroke', surface).attr('stroke-width', 1.2);
+        .attr('cx', x(p.t)).attr('cy', y(p.idx)).attr('r', p.live ? 4 : 2.6)
+        .attr('fill', l.hex).attr('stroke', surface).attr('stroke-width', 1.2)
+        .attr('class', p.live && changed.has(l.code) ? 'live-dot flash' : null);
     }
   }
 
@@ -2044,13 +2064,14 @@ function renderTwdCard() {
   // 折線延伸到當下:尾端補一個 scanner 即時交叉價的點(歷史日更點不動;
   // 兩來源差異 <0.3%,銜接平順)
   const live = twdLiveRates();
+  const changed = twdChangedCodes(live);
   const nowMs = Date.now();
   if (live && nowMs > new Date(win[win.length - 1].date).getTime()) {
     const hhmm = new Date(nowMs).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
-    win.push({ date: `即時 ${hhmm}`, t: nowMs, ...live });
+    win.push({ date: `即時 ${hhmm}`, t: nowMs, live: true, ...live });
   }
-  renderTwdStats(series);
-  renderTwdChart(win);
+  renderTwdStats(series, live, changed);
+  renderTwdChart(win, changed);
   renderTwdLegend();
   renderTwdRead(win, nWeeks);
 }
