@@ -1839,9 +1839,29 @@ function twdLiveRates() {
 // 折線點的時間:即時點帶 t(毫秒),歷史日更點只有日期字串
 const twdPtMs = (p) => p.t ?? new Date(p.date).getTime();
 
+// 每 5 秒隨機挑一個數字盒,讓它的數字與「即時」標籤呼吸一次
+//(使用者指定:隨機單顆,不要四個一起呼吸)。動畫結束就移除 class,
+// 下次再加才會重播;每次 tick 重查 DOM,所以重繪換新節點也不受影響
+let twdBreatheTimer = null;
+
+function startTwdBreathe() {
+  if (twdBreatheTimer) return;
+  twdBreatheTimer = setInterval(() => {
+    const boxes = document.querySelectorAll('#twd-stats .twd-box');
+    if (!boxes.length || !$('#twd-stats .live-tag')) return;   // 非即時模式不呼吸
+    const box = boxes[Math.floor(Math.random() * boxes.length)];
+    for (const sel of ['.value', '.live-tag']) {
+      const n = box.querySelector(sel);
+      if (!n) continue;
+      n.classList.add('breathe-once');
+      n.addEventListener('animationend', () => n.classList.remove('breathe-once'), { once: true });
+    }
+  }, 5000);
+}
+
 // 卡頭四個數字盒:1 單位外幣 = 多少台幣 + 一週變化(匯率升 = 台幣貶)
-// 有 scanner 即時交叉價時優先顯示:標「即時」,數字與標籤帶每 5 秒
-// 一次的呼吸動畫(常駐提示活報價,不綁更新時機);沒有才退回日更最新值
+// 有 scanner 即時交叉價時優先顯示(標「即時」,隨機呼吸見 startTwdBreathe);
+// 沒有才退回日更最新值
 function renderTwdStats(series, live) {
   const grid = $('#twd-stats');
   const latest = series[series.length - 1];
@@ -1856,8 +1876,7 @@ function renderTwdStats(series, live) {
     label.appendChild(document.createTextNode(`1 ${c.name}`));
     if (live) label.appendChild(el('span', 'live-tag', '即時'));
     head.appendChild(label);
-    head.appendChild(el('span', `value${live ? ' live-breathe' : ''}`,
-      `${fmtTwdRate(cur, c.digits)} 台幣`));
+    head.appendChild(el('span', 'value', `${fmtTwdRate(cur, c.digits)} 台幣`));
 
     // 一週變化:匯率漲 = 要花更多台幣 = 台幣走貶
     const one = toSeries(series.map(p => p.date), series.map(p => p[c.code]));
@@ -1872,6 +1891,7 @@ function renderTwdStats(series, live) {
     return box;
   });
   grid.replaceChildren(...boxes);
+  if (live) startTwdBreathe();
 }
 
 // 指數化多線圖:期初 = 100,線往上 = 要花更多台幣換 1 單位外幣 = 台幣走貶

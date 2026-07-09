@@ -383,15 +383,15 @@ section { margin-bottom: 34px; }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
 .twd-box .twd-swatch { width: 10px; height: 10px; }
 
-/* 即時資訊的呼吸動畫:數字與「即時」標籤每 5 秒一個週期的透明度
-   明滅,常駐提示「這是活的報價」(不用黃底、不綁更新時機) */
-.macro-head .value.live-breathe,
-.twd-box .live-tag {
-  animation: live-breathe 5s ease-in-out infinite;
+/* 即時資訊的呼吸動畫:每 5 秒由 JS 隨機挑一個數字盒,數字與「即時」
+   標籤明滅一次(使用者指定隨機單顆,不要四個一起呼吸;見 startTwdBreathe) */
+.twd-box .value.breathe-once,
+.twd-box .live-tag.breathe-once {
+  animation: live-breathe 1.8s ease-in-out 1;
 }
 @keyframes live-breathe {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0.35; }
+  50%      { opacity: 0.25; }
 }
 
 /* 卡頭數字盒的「即時」小標(scanner 即時交叉價;無 scanner 資料時不顯示)
