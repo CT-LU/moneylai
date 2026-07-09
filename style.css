@@ -387,7 +387,7 @@ section { margin-bottom: 34px; }
    標籤明滅一次(使用者指定隨機單顆,不要四個一起呼吸;見 startTwdBreathe) */
 .twd-box .value.breathe-once,
 .twd-box .live-tag.breathe-once {
-  animation: live-breathe 1.8s ease-in-out 1;
+  animation: live-breathe 1s ease-in-out 1;
 }
 @keyframes live-breathe {
   0%, 100% { opacity: 1; }
