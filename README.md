@@ -2,6 +2,10 @@
 
 [繁體中文](#繁體中文) | [English](#english)
 
+![新台幣匯率卡截圖 / TWD exchange-rate card](docs/screenshot-twd.png)
+
+![資產資金流向熱力圖截圖 / Asset flow heatmap](docs/screenshot-asset.png)
+
 ---
 
 ## 繁體中文
