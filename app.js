@@ -517,6 +517,7 @@ async function fetchScanner() {
   }
   if (!Object.keys(out).length) throw new Error('scanner 無資料');
   state.scanner = out;
+  state.scannerSeq = (state.scannerSeq || 0) + 1;   // 抓取世代:台幣卡閃爍用
   recordScannerHistory();
 }
 
@@ -1839,25 +1840,15 @@ function twdLiveRates() {
 // 折線點的時間:即時點帶 t(毫秒),歷史日更點只有日期字串
 const twdPtMs = (p) => p.t ?? new Date(p.date).getTime();
 
-// 上一輪即時交叉價:比對哪幾種貨幣的報價有跳動,跳動的才閃爍
-//(renderAll 由多個資料源觸發,若每次重繪都閃會變成噪音)
-let twdPrevLive = null;
-
-function twdChangedCodes(live) {
-  const changed = new Set();
-  if (live && twdPrevLive) {
-    for (const { code } of TWDFX_CURRENCIES) {
-      if (live[code] !== twdPrevLive[code]) changed.add(code);
-    }
-  }
-  if (live) twdPrevLive = live;
-  return changed;
-}
+// 已渲染過的 scanner 抓取世代:每輪新報價到手就閃一次,讓更新看得見
+//(renderAll 由多個資料源觸發,靠世代序號避免「重繪但沒新報價」也閃;
+// 原本比對數值有變才閃,但 FX_IDC 綜合報價可能幾輪同價,使用者等不到閃爍)
+let twdSeenSeq = 0;
 
 // 卡頭四個數字盒:1 單位外幣 = 多少台幣 + 一週變化(匯率升 = 台幣貶)
 // 有 scanner 即時交叉價時優先顯示(標「即時」),沒有才退回日更最新值;
-// changed = 本輪報價有跳動的貨幣,數字閃一下黃底讓更新看得見
-function renderTwdStats(series, live, changed) {
+// flash = 本輪拿到新報價,數字閃一下黃底讓更新看得見
+function renderTwdStats(series, live, flash) {
   const grid = $('#twd-stats');
   const latest = series[series.length - 1];
   const latestMs = new Date(latest.date).getTime();
@@ -1871,7 +1862,7 @@ function renderTwdStats(series, live, changed) {
     label.appendChild(document.createTextNode(`1 ${c.name}`));
     if (live) label.appendChild(el('span', 'live-tag', '即時'));
     head.appendChild(label);
-    head.appendChild(el('span', `value${changed.has(c.code) ? ' flash' : ''}`,
+    head.appendChild(el('span', `value${flash ? ' flash' : ''}`,
       `${fmtTwdRate(cur, c.digits)} 台幣`));
 
     // 一週變化:匯率漲 = 要花更多台幣 = 台幣走貶
@@ -1890,8 +1881,8 @@ function renderTwdStats(series, live, changed) {
 }
 
 // 指數化多線圖:期初 = 100,線往上 = 要花更多台幣換 1 單位外幣 = 台幣走貶
-// changed = 本輪即時報價有跳動的貨幣,對應線的即時端點閃一下
-function renderTwdChart(win, changed = new Set()) {
+// flash = 本輪拿到新報價,即時端點閃一下
+function renderTwdChart(win, flash = false) {
   const container = $('#twd-chart');
   const width = Math.max(320, container.clientWidth || 640);
   const height = 260;
@@ -1969,7 +1960,7 @@ function renderTwdChart(win, changed = new Set()) {
       svg.append('circle')
         .attr('cx', x(p.t)).attr('cy', y(p.idx)).attr('r', p.live ? 4 : 2.6)
         .attr('fill', l.hex).attr('stroke', surface).attr('stroke-width', 1.2)
-        .attr('class', p.live && changed.has(l.code) ? 'live-dot flash' : null);
+        .attr('class', p.live && flash ? 'live-dot flash' : null);
     }
   }
 
@@ -2068,14 +2059,15 @@ function renderTwdCard() {
   // 折線延伸到當下:尾端補一個 scanner 即時交叉價的點(歷史日更點不動;
   // 兩來源差異 <0.3%,銜接平順)
   const live = twdLiveRates();
-  const changed = twdChangedCodes(live);
+  const flash = !!live && state.scannerSeq !== twdSeenSeq;
+  if (live) twdSeenSeq = state.scannerSeq;
   const nowMs = Date.now();
   if (live && nowMs > new Date(win[win.length - 1].date).getTime()) {
     const hhmm = new Date(nowMs).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
     win.push({ date: `即時 ${hhmm}`, t: nowMs, live: true, ...live });
   }
-  renderTwdStats(series, live, changed);
-  renderTwdChart(win, changed);
+  renderTwdStats(series, live, flash);
+  renderTwdChart(win, flash);
   renderTwdLegend();
   renderTwdRead(win, nWeeks);
 }

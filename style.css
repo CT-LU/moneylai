@@ -383,27 +383,34 @@ section { margin-bottom: 34px; }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
 .twd-box .twd-swatch { width: 10px; height: 10px; }
 
-/* 即時報價跳動時的閃爍:數字盒閃黃底、折線即時端點閃爍
-   (只在值真的變動時觸發;元素每次重繪都是新節點,動畫自然重播) */
+/* 每輪拿到新即時報價的閃爍:數字盒閃黃底、折線即時端點閃爍
+   (以 scanner 抓取世代判斷,約每 2 分鐘一次;元素每次重繪都是
+   新節點,動畫自然重播) */
 .macro-head .value.flash {
   border-radius: 6px;
-  animation: live-flash 1.4s ease-out 1;
+  animation: live-flash 2.2s ease-out 1;
 }
 @keyframes live-flash {
-  0%, 35% { background: var(--mem-yellow); box-shadow: 0 0 0 3px var(--mem-yellow); }
-  100%    { background: transparent;       box-shadow: 0 0 0 3px transparent; }
+  0%, 12%  { background: var(--mem-yellow); box-shadow: 0 0 0 4px var(--mem-yellow); }
+  22%      { background: transparent;       box-shadow: 0 0 0 4px transparent; }
+  34%, 46% { background: var(--mem-yellow); box-shadow: 0 0 0 4px var(--mem-yellow); }
+  100%     { background: transparent;       box-shadow: 0 0 0 4px transparent; }
 }
-.twd-chart circle.live-dot.flash { animation: live-dot-flash 1.4s ease-out 1; }
+.twd-chart circle.live-dot.flash { animation: live-dot-flash 2.2s ease-out 1; }
 @keyframes live-dot-flash {
-  0%, 20%  { opacity: 0; }
-  30%, 45% { opacity: 1; }
-  55%, 70% { opacity: 0; }
-  80%      { opacity: 1; }
+  0%, 15%  { opacity: 0; }
+  25%, 40% { opacity: 1; }
+  50%, 65% { opacity: 0; }
+  75%      { opacity: 1; }
 }
 
 /* 卡頭數字盒的「即時」小標(scanner 即時交叉價;無 scanner 資料時不顯示)
-   黃底固定配深墨字,深淺模式皆足夠對比 */
+   黃底固定配深墨字,深淺模式皆足夠對比;前面一顆呼吸小點,
+   常駐提示「這是活的報價」(不用等 2 分鐘一次的閃爍) */
 .live-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
@@ -413,6 +420,18 @@ section { margin-bottom: 34px; }
   background: var(--mem-yellow);
   color: #17141a;
   flex: none;
+}
+.live-tag::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #17141a;
+  animation: live-beat 1.6s ease-in-out infinite;
+}
+@keyframes live-beat {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.15; }
 }
 
 /* 中國資金流向卡:分時圖小標 + 兩張長條圖並排(窄幅堆疊) */
