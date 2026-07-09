@@ -1586,17 +1586,19 @@ function renderBondRead(data, vix) {
     spreadText = `目前 10Y−2Y 利差 ${fmtBp(spreadBp, 0)},曲線為正斜率。`;
   }
 
-  // 股市端:VIX 水位 + 與債市方向合讀
+  // 股市端:VIX 水位 + 與債市方向合讀。VIX = 幫美股買保險的價格
+  // (由 S&P 500 選擇權反推的未來 30 天預期波動):愈高 = 愈多人花錢防跌
   let vixText = '';
   if (vix && Number.isFinite(vix.dW)) {
-    const level = vix.now >= 30 ? 'VIX 高於 30,市場處於恐慌'
-      : vix.now >= 20 ? 'VIX 高於 20,股市避險情緒升溫'
-      : vix.now >= 15 ? 'VIX 在正常區間,股市情緒平穩'
-      : 'VIX 低於 15,股市情緒偏樂觀';
+    const level = vix.now >= 30 ? '恐慌區(>30):保險不計價格地搶買,常見於暴跌當下——歷史上這種極端有時反而離底部不遠'
+      : vix.now >= 20 ? '避險區(20–30):幫股票買保險明顯變貴,投資人正花錢防跌,情緒轉向防禦'
+      : vix.now >= 15 ? '正常區(15–20):該有的緊張都在價格裡,股市情緒平穩'
+      : '樂觀區(<15):保險便宜到沒什麼人覺得會出事,情緒偏樂觀(過度平靜有時是自滿的訊號)';
     let combo = '';
     if (vix.dW > 1 && d10 < -TH) combo = '——與資金湧入長債同向,股債同步發出避險訊號';
     else if (vix.dW < -1 && d10 > TH) combo = '——與殖利率走升同向,整體偏風險偏好';
-    vixText = `股市端:${level}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)${combo}。`;
+    vixText = `股市端:VIX ${vix.now.toFixed(1)}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)` +
+      `——幫美股買保險的價格,愈高=愈多人花錢防跌。${level}${combo}。`;
   }
 
   setRead(p, tag, [
