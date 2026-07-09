@@ -1074,9 +1074,17 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
     .x(p => colX(p.j) + Math.max(2, cellW) / 2)
     .y(p => headerH + (p.rank - 1) * rowH + cellH / 2)
     .curve(d3.curveBumpX);   // 名次間的平滑水平過渡,輪動圖的標準曲線
+  // 列名稱的 hover 強調:放大加粗換墨色,和淡出/疊加線一起指出「現在看的是哪一列」
+  const setLabelEmphasis = (name) => {
+    svg.selectAll('g.hm-row').select('text.hm-label')
+      .attr('font-size', d => d.name === name ? 14.5 : 12.5)
+      .attr('font-weight', d => d.name === name ? 800 : null)
+      .attr('fill', d => d.name === name ? ink : cSub);
+  };
   const clearRankLine = () => {
     overlay.selectAll('*').remove();
     svg.selectAll('g.hm-row').attr('opacity', 1);
+    setLabelEmphasis(null);
   };
   const showRankLine = (row) => {
     clearRankLine();
@@ -1084,6 +1092,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       rk ? { j, rank: rk.rank, v: cellVal(row.cells[j]) } : null);
     if (!pts.some(Boolean)) return;
     svg.selectAll('g.hm-row').attr('opacity', d => d.name === row.name ? 1 : 0.25);
+    setLabelEmphasis(row.name);
     overlay.append('path')
       .attr('d', rankLine(pts))
       .attr('fill', 'none').attr('stroke', surface).attr('stroke-width', 7);
@@ -1107,6 +1116,7 @@ function renderHeatmap(containerSel, legendSel, rows, nWeeks, patId, sortAgo, on
       .on('mouseenter', () => showRankLine(row))
       .on('mouseleave', clearRankLine);
     g.append('text')
+      .attr('class', 'hm-label')
       .attr('x', labelW - 10)
       .attr('y', cellH / 2 + 4)
       .attr('text-anchor', 'end')
