@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>錢錢流向儀表板</title>
-<link rel="stylesheet" href="style.css">
+<!-- ?v= 為快取破壞參數:style.css / app.js 有改動時要一起遞增,
+     否則 GitHub Pages 的 10 分鐘快取會讓使用者拿到新舊混雜的檔案 -->
+<link rel="stylesheet" href="style.css?v=2">
 </head>
 <body>
 <div class="viz-root">
@@ -194,6 +196,6 @@
 <div id="tooltip" class="tooltip" hidden></div>
 
 <script src="d3.v7.min.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=2"></script>
 </body>
 </html>
