@@ -1611,30 +1611,34 @@ function renderRiskRead() {
   const p = $('#risk-read');
   const parts = [];
 
+  // 日圓套利:借幾乎零利率的日圓、換成美元買高息資產,美日利差就是這門生意的毛利
   const sp = usJpSpread();
   if (sp) {
     const bp = Number.isFinite(sp.dW) ? sp.dW * 100 : null;
-    const verdict = bp === null || Math.abs(bp) < 3 ? '變化有限'
-      : bp > 0 ? '利差走闊,借日圓買美元資產的套利誘因升溫(偏 risk-on)'
-      : '利差收窄,套利平倉壓力升溫——留意資金回流日圓引發的避險連鎖';
+    const verdict = bp === null || Math.abs(bp) < 3 ? '利差變化有限,套利盤按兵不動'
+      : bp > 0 ? '利差走闊:這門生意的利潤變厚,借日圓買美元資產的套利更活絡(偏 risk-on)'
+      : '利差收窄:套利利潤變薄,賣美元資產、買回日圓還錢的平倉壓力升溫——收得又快又多時常拖累全球風險資產(2024-08 日圓套利平倉即一例)';
     parts.push(`套利端:美日 10 年利差 ${sp.now.toFixed(2)} 個百分點` +
-      (bp === null ? '' : `(週${fmtBp(bp, 0)})`) + `,${verdict}。`);
+      (bp === null ? '' : `(週${fmtBp(bp, 0)})`) +
+      `——借近零利率的日圓、買高息美元資產,利差就是這門套利生意的毛利。${verdict}。`);
   }
 
+  // HYG=借錢給體質較差公司的債(利息高、怕倒帳)、LQD=借給績優公司;
+  // 敢不敢多賺那點利息去承擔倒帳風險,是比股市更早說真話的風險偏好溫度計
   const hyg = state.scanner?.[HYG_SYM], lqd = state.scanner?.[LQD_SYM];
   if (Number.isFinite(hyg?.perfW) && Number.isFinite(lqd?.perfW)) {
     const rel = hyg.perfW - lqd.perfW;
-    const verdict = rel > 0.3 ? '高收益債相對強,信用市場的風險胃納偏強'
-      : rel < -0.3 ? '高收益債相對弱,信用市場先行轉趨保守(常領先股市)'
-      : '信用市場中性';
-    parts.push(`信用端:高收益債(HYG)本週 ${fmtPct(hyg.perfW)}、相對投資級(LQD)` +
-      `${rel > 0 ? '+' : ''}${rel.toFixed(1)} 個百分點,${verdict}。`);
+    const verdict = rel > 0.3 ? '資金敢買體質較差公司的債去多賺利息,信用市場的風險胃納偏強'
+      : rel < -0.3 ? '資金從高風險債退回績優公司債,信用市場先轉保守——這個訊號常走在股市轉弱之前'
+      : '兩者表現相當,信用市場中性';
+    parts.push(`信用端:高收益債(HYG,借錢給體質較差的公司、利息高)本週 ${fmtPct(hyg.perfW)}、` +
+      `相對投資級公司債(LQD,借給績優公司)${rel > 0 ? '+' : ''}${rel.toFixed(1)} 個百分點,${verdict}。`);
   }
 
   const spx = state.scanner?.['SP:SPX'], tlt = state.scanner?.['NASDAQ:TLT'];
   if (Number.isFinite(spx?.perfW) && Number.isFinite(tlt?.perfW)) {
     const rel = spx.perfW - tlt.perfW;
-    const verdict = rel > 0.5 ? '資金偏股(risk-on)' : rel < -0.5 ? '資金偏債(避險)' : '股債均衡';
+    const verdict = rel > 0.5 ? '資金偏股,敢冒險(risk-on)' : rel < -0.5 ? '資金偏債,躲進避險資產(risk-off)' : '股債均衡';
     parts.push(`股債比:S&P 500 本週 ${fmtPct(spx.perfW)}、債市 TLT ${fmtPct(tlt.perfW)},${verdict}。`);
   }
 
