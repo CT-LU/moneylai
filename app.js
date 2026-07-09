@@ -1296,15 +1296,19 @@ function oilSpreadText() {
   return `布蘭特−WTI 價差 $${spread.toFixed(2)}(布蘭特 $${brent.close.toFixed(2)} − WTI $${wti.close.toFixed(2)})${wk},${verdict}。`;
 }
 
-// 銅金比:銅=實體增長需求、金=避險;比值升 = 增長預期壓過避險(經典 risk-on 領先訊號)
+// 銅金比:銅=工廠在用的金屬(買它=押景氣)、金=避險資產(買它=怕出事),
+// 比值升 = 市場選擇押景氣而非躲風險(經典 risk-on 領先訊號,常領先殖利率與股市)
 function copperGoldText() {
   const cu = state.scanner?.['OANDA:XCUUSD'];
   const au = state.scanner?.[GOLD_SYM];
   if (!Number.isFinite(cu?.perfW) || !Number.isFinite(au?.perfW)) return '';
   const dW = ((1 + cu.perfW / 100) / (1 + au.perfW / 100) - 1) * 100;
-  const verdict = dW > 0.5 ? '增長預期壓過避險(偏 risk-on)'
-    : dW < -0.5 ? '避險需求壓過增長(偏 risk-off)' : '增長與避險大致平衡';
-  return `銅金比本週 ${fmtPct(dW)},${verdict}。`;
+  const verdict = dW > 2 ? '銅大幅跑贏黃金:市場重押景氣擴張,典型 risk-on 領先訊號(常走在殖利率與股市前面)'
+    : dW > 0.5 ? '銅跑贏黃金:買「工廠在用的金屬」多過買「避險的金屬」,市場偏押景氣(偏 risk-on)'
+    : dW < -2 ? '黃金大幅跑贏銅:資金明顯逃向避險資產,對景氣的擔憂升溫(risk-off 加劇)'
+    : dW < -0.5 ? '黃金跑贏銅:資金買避險多過押景氣(偏 risk-off)'
+    : '銅與黃金本週同步,押景氣與躲風險兩邊拉鋸,方向未明';
+  return `銅金比本週 ${fmtPct(dW)}(銅相對黃金的週表現差),${verdict}。`;
 }
 
 function renderAssetCard() {
