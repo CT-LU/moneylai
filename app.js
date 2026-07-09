@@ -91,6 +91,11 @@ const LQD_SYM   = 'AMEX:LQD';
 const CNH_SYM = 'FX_IDC:USDCNH';
 const CNY_SYM = 'FX_IDC:USDCNY';
 
+// 台幣匯率卡即時交叉價用:配 USDTWD/USDCNY 推「1 單位外幣兌台幣」
+//(FX_IDC 外匯為 streaming 即時報價,已驗證存在)
+const USDJPY_SYM = 'FX_IDC:USDJPY';
+const EURUSD_SYM = 'FX_IDC:EURUSD';
+
 const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
@@ -102,6 +107,8 @@ const SCANNER_ALL = [
   { sym: LQD_SYM,   ep: 'global', name: '投資級債 LQD' },
   { sym: CNH_SYM,   ep: 'global', name: '美元兌離岸人民幣' },
   { sym: CNY_SYM,   ep: 'global', name: '美元兌在岸人民幣' },
+  { sym: USDJPY_SYM, ep: 'global', name: '美元兌日圓' },
+  { sym: EURUSD_SYM, ep: 'global', name: '歐元兌美元' },
 ];
 
 // 總經月資料(聯準會雙重使命:物價 + 就業)
@@ -1815,26 +1822,43 @@ function fmtTwdRate(v, digits) {
   return Number.isFinite(v) ? v.toFixed(digits) : '—';
 }
 
+// 即時交叉價:scanner(每 2 分鐘輪詢)的 USDTWD 配 USDJPY/EURUSD/USDCNY
+// 推「1 單位外幣兌台幣」;任一報價缺就回 null,整卡退回 currency-api 日更值
+function twdLiveRates() {
+  const s = state.scanner;
+  const c = (sym) => (s && Number.isFinite(s[sym]?.close) && s[sym].close > 0) ? s[sym].close : null;
+  const twd = c(TWD_REGION.sym), jpy = c(USDJPY_SYM), eur = c(EURUSD_SYM), cny = c(CNY_SYM);
+  if (!twd || !jpy || !eur || !cny) return null;
+  return { usd: twd, jpy: twd / jpy, eur: twd * eur, cny: twd / cny };
+}
+
+// 折線點的時間:即時點帶 t(毫秒),歷史日更點只有日期字串
+const twdPtMs = (p) => p.t ?? new Date(p.date).getTime();
+
 // 卡頭四個數字盒:1 單位外幣 = 多少台幣 + 一週變化(匯率升 = 台幣貶)
+// 有 scanner 即時交叉價時優先顯示(標「即時」),沒有才退回日更最新值
 function renderTwdStats(series) {
   const grid = $('#twd-stats');
   const latest = series[series.length - 1];
   const latestMs = new Date(latest.date).getTime();
+  const live = twdLiveRates();
   const boxes = TWDFX_CURRENCIES.map((c) => {
+    const cur = live ? live[c.code] : latest[c.code];
     const box = el('div', 'macro-box twd-box');
     const head = el('div', 'macro-head');
     const label = el('span', 'label');
     label.appendChild(el('span', 'twd-swatch'));
     label.lastChild.style.background = cssVar(c.color);
     label.appendChild(document.createTextNode(`1 ${c.name}`));
+    if (live) label.appendChild(el('span', 'live-tag', '即時'));
     head.appendChild(label);
-    head.appendChild(el('span', 'value', `${fmtTwdRate(latest[c.code], c.digits)} 台幣`));
+    head.appendChild(el('span', 'value', `${fmtTwdRate(cur, c.digits)} 台幣`));
 
     // 一週變化:匯率漲 = 要花更多台幣 = 台幣走貶
     const one = toSeries(series.map(p => p.date), series.map(p => p[c.code]));
     const wk = valueNear(one.slice(0, -1), latestMs - 7 * DAY_MS);
     if (wk) {
-      const pct = pctChange(wk.value, latest[c.code]);
+      const pct = pctChange(wk.value, cur);
       const cls = Math.abs(pct) < 0.05 ? 'flat' : pct > 0 ? 'up' : 'down';
       const word = Math.abs(pct) < 0.05 ? '台幣持平' : pct > 0 ? '台幣貶' : '台幣升';
       head.appendChild(el('span', `delta ${cls}`, `${fmtPct(pct)} /週(${word})`));
@@ -1864,14 +1888,14 @@ function renderTwdChart(win) {
     hex: cssVar(c.color),
     pts: win.map(p => ({
       date: p.date,
-      t: new Date(p.date).getTime(),
+      t: twdPtMs(p),
       rate: p[c.code],
       idx: p[c.code] / win[0][c.code] * 100,
     })),
   }));
 
   const x = d3.scaleTime()
-    .domain(d3.extent(win, p => new Date(p.date).getTime()))
+    .domain(d3.extent(win, p => twdPtMs(p)))
     .range([m.left, width - m.right]);
   const allIdx = lines.flatMap(l => l.pts.map(p => p.idx)).concat([100]);
   const span = d3.max(allIdx) - d3.min(allIdx) || 1;
@@ -1957,10 +1981,10 @@ function renderTwdChart(win) {
       const tMs = x.invert(mx).getTime();
       let bi = 0, bd = Infinity;
       win.forEach((p, i) => {
-        const d = Math.abs(new Date(p.date).getTime() - tMs);
+        const d = Math.abs(twdPtMs(p) - tMs);
         if (d < bd) { bd = d; bi = i; }
       });
-      const px = x(new Date(win[bi].date).getTime());
+      const px = x(twdPtMs(win[bi]));
       hover.style('display', null).select('line').attr('x1', px).attr('x2', px);
       showTooltip([
         { text: win[bi].date, cls: 'tt-label' },
@@ -2016,6 +2040,15 @@ function renderTwdCard() {
   const startMs = latestMs - nWeeks * 7 * DAY_MS - DAY_MS / 2;
   const win = series.filter(p => new Date(p.date).getTime() >= startMs);
   if (win.length < 2) return;
+
+  // 折線延伸到當下:尾端補一個 scanner 即時交叉價的點(歷史日更點不動;
+  // 兩來源差異 <0.3%,銜接平順)
+  const live = twdLiveRates();
+  const nowMs = Date.now();
+  if (live && nowMs > new Date(win[win.length - 1].date).getTime()) {
+    const hhmm = new Date(nowMs).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+    win.push({ date: `即時 ${hhmm}`, t: nowMs, ...live });
+  }
   renderTwdStats(series);
   renderTwdChart(win);
   renderTwdLegend();

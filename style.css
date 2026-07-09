@@ -383,6 +383,20 @@ section { margin-bottom: 34px; }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
 .twd-box .twd-swatch { width: 10px; height: 10px; }
 
+/* 卡頭數字盒的「即時」小標(scanner 即時交叉價;無 scanner 資料時不顯示)
+   黃底固定配深墨字,深淺模式皆足夠對比 */
+.live-tag {
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 2px 6px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  background: var(--mem-yellow);
+  color: #17141a;
+  flex: none;
+}
+
 /* 中國資金流向卡:分時圖小標 + 兩張長條圖並排(窄幅堆疊) */
 .china-subtitle {
   font-size: 13.5px;
