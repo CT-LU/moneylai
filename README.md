@@ -55,6 +55,10 @@ python3 -m http.server 8000
 
 本專案僅供資訊參考與技術展示，不構成任何投資建議。部分資料來自非官方 API，可能隨時變動或失效。
 
+### 授權
+
+[MIT License](LICENSE)
+
 ---
 
 ## English
@@ -107,3 +111,7 @@ python3 -m http.server 8000
 ### Disclaimer
 
 This project is for informational and technical-demonstration purposes only and does not constitute investment advice. Some data comes from unofficial APIs that may change or break at any time.
+
+### License
+
+[MIT License](LICENSE)
