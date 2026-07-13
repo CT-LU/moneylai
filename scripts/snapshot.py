@@ -33,6 +33,13 @@ GLOBAL = [
     'TVC:GOLD',        # 黃金現貨(銅金比)
     'AMEX:HYG',        # 高收益債
     'AMEX:LQD',        # 投資級債
+    'AMEX:XLK',        # 科技(週期/防禦類股比:週期籃)
+    'AMEX:XLF',        # 金融(週期籃)
+    'AMEX:XLI',        # 工業(週期籃)
+    'AMEX:XLY',        # 非必需消費(週期籃)
+    'AMEX:XLV',        # 醫療(週期/防禦類股比:防禦籃)
+    'AMEX:XLP',        # 必需消費(防禦籃)
+    'AMEX:XLU',        # 公用事業(防禦籃)
     'FX_IDC:USDCNH',   # 美元兌離岸人民幣(CNH−CNY 價差)
     'FX_IDC:USDCNY',   # 美元兌在岸人民幣
     'FX_IDC:USDJPY',   # 美元兌日圓(台幣卡即時交叉價)

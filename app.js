@@ -90,6 +90,20 @@ const GOLD_SYM  = 'TVC:GOLD';
 const HYG_SYM   = 'AMEX:HYG';
 const LQD_SYM   = 'AMEX:LQD';
 
+// 週期性 vs 防禦性類股 ETF(Cyclicals/Defensives Ratio:
+// 資金在「景氣好才賺錢的生意」與「景氣再差也得買的東西」之間的移動,risk-on/off 最敏感的溫度計)
+const CYC_SYMS = [
+  { sym: 'AMEX:XLK', name: '科技 XLK' },
+  { sym: 'AMEX:XLF', name: '金融 XLF' },
+  { sym: 'AMEX:XLI', name: '工業 XLI' },
+  { sym: 'AMEX:XLY', name: '非必需消費 XLY' },
+];
+const DEF_SYMS = [
+  { sym: 'AMEX:XLV', name: '醫療 XLV' },
+  { sym: 'AMEX:XLP', name: '必需消費 XLP' },
+  { sym: 'AMEX:XLU', name: '公用事業 XLU' },
+];
+
 // 人民幣離岸/在岸(CNH−CNY 價差:離岸比在岸貶得多 = 資金外流壓力)
 const CNH_SYM = 'FX_IDC:USDCNH';
 const CNY_SYM = 'FX_IDC:USDCNY';
@@ -108,6 +122,8 @@ const SCANNER_ALL = [
   { sym: GOLD_SYM,  ep: 'global', name: '黃金現貨' },
   { sym: HYG_SYM,   ep: 'global', name: '高收益債 HYG' },
   { sym: LQD_SYM,   ep: 'global', name: '投資級債 LQD' },
+  ...CYC_SYMS.map(s => ({ ...s, ep: 'global' })),
+  ...DEF_SYMS.map(s => ({ ...s, ep: 'global' })),
   { sym: CNH_SYM,   ep: 'global', name: '美元兌離岸人民幣' },
   { sym: CNY_SYM,   ep: 'global', name: '美元兌在岸人民幣' },
   { sym: USDJPY_SYM, ep: 'global', name: '美元兌日圓' },
@@ -1413,20 +1429,33 @@ function usJpSpread() {
   return { now, dW };
 }
 
-// 美日利差的跨日累積序列(兩檔同日都有紀錄才算得出來;啟用初期只有少數點)
-function usJpSpreadSeries() {
-  const jp = new Map(scannerSeries(JP10Y_SYM).map(p => [p.date, p.value]));
-  return scannerSeries('TVC:US10Y')
-    .flatMap(p => jp.has(p.date) ? [{ date: p.date, value: p.value - jp.get(p.date) }] : []);
+// N 檔 scanner 跨日累積序列的同日交集,值 = fn(各檔當日值,依 syms 順序);
+// 每一天要所有檔都有紀錄才算得出來,啟用初期只有少數點
+function joinSeries(syms, fn) {
+  const [first, ...rest] = syms.map(sym =>
+    new Map(scannerSeries(sym).map(p => [p.date, p.value])));
+  return [...first.entries()]
+    .filter(([date]) => rest.every(m => m.has(date)))
+    .map(([date, v]) => ({ date, value: fn([v, ...rest.map(m => m.get(date))]) }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// 信用風險胃納的跨日累積序列:HYG/LQD 比值 ×100(升 = 資金敢買高收益債);
-// 同日兩檔都有紀錄才算得出來,啟用初期只有少數點
-function hygLqdSeries() {
-  const lqd = new Map(scannerSeries(LQD_SYM).map(p => [p.date, p.value]));
-  return scannerSeries(HYG_SYM)
-    .flatMap(p => lqd.has(p.date) ? [{ date: p.date, value: p.value / lqd.get(p.date) * 100 }] : []);
-}
+// 幾何平均:讓籃內各 ETF 的價格量級不失真地等權
+const gm = vs => Math.exp(vs.reduce((s, v) => s + Math.log(v), 0) / vs.length);
+
+// 美日利差的跨日累積序列
+const usJpSpreadSeries = () => joinSeries(['TVC:US10Y', JP10Y_SYM], ([us, jp]) => us - jp);
+
+// 信用風險胃納:HYG/LQD 比值 ×100(升 = 資金敢買高收益債)
+const hygLqdSeries = () => joinSeries([HYG_SYM, LQD_SYM], ([h, l]) => h / l * 100);
+
+// 股債比:S&P 500 對 TLT 的比值(升 = 資金偏股)
+const spxTltSeries = () => joinSeries(['SP:SPX', 'NASDAQ:TLT'], ([spx, tlt]) => spx / tlt);
+
+// 週期/防禦類股比 ×100:兩籃各取幾何平均再相除(升 = 資金衝向進攻型類股)
+const cycDefSeries = () => joinSeries(
+  [...CYC_SYMS, ...DEF_SYMS].map(s => s.sym),
+  vs => gm(vs.slice(0, CYC_SYMS.length)) / gm(vs.slice(CYC_SYMS.length)) * 100);
 
 function renderBondChart(data) {
   const container = $('#bond-chart');
@@ -1628,7 +1657,8 @@ function renderBondRead(data, vix) {
   ], '一週前與一月前為以 TradingView 表現欄位反推的估值。');
 }
 
-// 風險胃納合讀:套利端(美日利差)、信用端(HYG 相對 LQD)、股債比(SPX 相對 TLT)
+// 風險胃納合讀:套利端(美日利差)、信用端(HYG 相對 LQD)、股債比(SPX 相對 TLT)、
+// 類股端(週期籃相對防禦籃)
 function renderRiskRead() {
   const p = $('#risk-read');
   const parts = [];
@@ -1668,6 +1698,23 @@ function renderRiskRead() {
     const rel = spx.perfW - tlt.perfW;
     const verdict = rel > 0.5 ? '資金偏股,敢冒險(risk-on)' : rel < -0.5 ? '資金偏債,躲進避險資產(risk-off)' : '股債均衡';
     parts.push(`股債比:S&P 500 本週 ${fmtPct(spx.perfW)}、債市 TLT ${fmtPct(tlt.perfW)},${verdict}。`);
+  }
+
+  // 類股端:週期籃 vs 防禦籃的本週相對表現(各取籃內 ETF 的 Perf.W 平均),
+  // 資金在兩籃間的移動是風險偏好最敏感的溫度計
+  const basketPerfW = syms => {
+    const ps = syms.map(s => state.scanner?.[s.sym]?.perfW).filter(Number.isFinite);
+    return ps.length === syms.length ? ps.reduce((a, b) => a + b, 0) / ps.length : null;
+  };
+  const cyc = basketPerfW(CYC_SYMS), def = basketPerfW(DEF_SYMS);
+  if (cyc !== null && def !== null) {
+    const rel = cyc - def;
+    const verdict = rel > 0.5 ? '資金衝向進攻型類股,風險偏好升溫(risk-on)'
+      : rel < -0.5 ? '資金縮回防禦型類股,市場轉向避險(risk-off)'
+      : '兩籃表現相當,類股輪動中性';
+    parts.push(`類股端:週期股(科技/金融/工業/非必需消費——景氣好才賺錢的生意)本週 ${fmtPct(cyc)}、` +
+      `相對防禦股(醫療/必需消費/公用事業——景氣再差也得買的東西)${rel > 0 ? '+' : ''}${rel.toFixed(1)} 個百分點,` +
+      `${verdict}。資金在這兩籃之間的移動,是風險偏好最敏感的溫度計。`);
   }
 
   setRead(p, '風險胃納', parts);
@@ -1777,8 +1824,8 @@ function renderMiniTrend(container, def, series) {
   container.replaceChildren(svg.node());
 }
 
-// 六張迷你趨勢:VIX、美日 10 年利差、信用風險胃納 HYG/LQD(皆 scanner 跨日累積)
-// + 核心 PCE / 非農 / 失業率(月資料)
+// 八張迷你趨勢:VIX、美日 10 年利差、信用風險胃納 HYG/LQD、股債比 SPX/TLT、
+// 週期/防禦類股比(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
 function macroTrendDefs() {
   const vix = scannerSeries(VIX_SYM);
   const defs = [];
@@ -1803,6 +1850,22 @@ function macroTrendDefs() {
       key: 'credit', label: '信用風險胃納 HYG/LQD(×100)', series: credit,
       fmt: v => v.toFixed(2), deltaUnit: ' 點', digits: 2, ref: null,
       note: credit.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  const spxTlt = spxTltSeries();
+  if (spxTlt.length >= 2) {
+    defs.push({
+      key: 'spxtlt', label: '股債比 S&P 500/TLT', series: spxTlt,
+      fmt: v => v.toFixed(2), deltaUnit: ' 點', digits: 2, ref: null,
+      note: spxTlt.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  const cycDef = cycDefSeries();
+  if (cycDef.length >= 2) {
+    defs.push({
+      key: 'cycdef', label: '週期/防禦類股比(×100)', series: cycDef,
+      fmt: v => v.toFixed(2), deltaUnit: ' 點', digits: 2, ref: null,
+      note: cycDef.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
     });
   }
   if (state.macro) {
