@@ -83,6 +83,11 @@ const BOND_TENORS = [
 
 const VIX_SYM = 'TVC:VIX';
 
+// VIX 近月期貨(期限結構:現貨/近月 >1 = backwardation,恐慌集中在當下)。
+// 註:CBOE:VIX3M 與 CBOE:VX2! 在 scanner 查不到,精確的「現貨/三個月期貨」只能用
+// 每月換代碼的遠月合約(歷史累積會碎),故採符號固定的近月連續合約當代理
+const VX1_SYM = 'CBOE:VX1!';
+
 // 熱錢驅動因子與比率指標(不進熱力圖,供判讀用):
 // 美日 10 年利差(套利資金的引擎)、銅金比(增長 vs 避險)、HYG/LQD(信用風險胃納)
 const JP10Y_SYM = 'TVC:JP10Y';
@@ -117,6 +122,7 @@ const SCANNER_ALL = [
   ...SCANNER_FLOWS,
   ...BOND_TENORS.map(t => ({ sym: t.sym, ep: 'global', name: `美債 ${t.label}` })),
   { sym: VIX_SYM, ep: 'global', name: 'VIX' },
+  { sym: VX1_SYM, ep: 'futures', name: 'VIX 近月期貨' },
   ...SCANNER_REGIONS.map(r => ({ sym: r.sym, ep: 'global', name: r.usdName })),
   { sym: JP10Y_SYM, ep: 'global', name: '日債 10 年' },
   { sym: GOLD_SYM,  ep: 'global', name: '黃金現貨' },
@@ -1457,6 +1463,9 @@ const cycDefSeries = () => joinSeries(
   [...CYC_SYMS, ...DEF_SYMS].map(s => s.sym),
   vs => gm(vs.slice(0, CYC_SYMS.length)) / gm(vs.slice(CYC_SYMS.length)) * 100);
 
+// VIX 期限結構:現貨 ÷ 近月期貨(平時 <1 contango;>1 = backwardation 恐慌結構)
+const vixTermSeries = () => joinSeries([VIX_SYM, VX1_SYM], ([spot, fut]) => spot / fut);
+
 function renderBondChart(data) {
   const container = $('#bond-chart');
   const width = Math.max(300, container.clientWidth || 520);
@@ -1648,6 +1657,16 @@ function renderBondRead(data, vix) {
     else if (vix.dW < -1 && d10 > TH) combo = '——與殖利率走升同向,整體偏風險偏好';
     vixText = `股市端:VIX ${vix.now.toFixed(1)}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)` +
       `——幫美股買保險的價格,愈高=愈多人花錢防跌。${level}${combo}。`;
+    // 期限結構:現貨 ÷ 近月期貨。平時期貨比現貨貴(contango,比值 <1);
+    // 現貨飆過期貨(>1,backwardation)= 市場最怕的是「現在」,經典的恐慌結構
+    const fut = state.scanner?.[VX1_SYM];
+    if (Number.isFinite(fut?.close) && fut.close > 0) {
+      const ratio = vix.now / fut.close;
+      const read = ratio > 1 ? '現貨飆過期貨(backwardation):市場最怕的是「現在」,恐慌集中在當下的經典結構'
+        : ratio > 0.97 ? '現貨逼近期貨,結構偏平——恐慌再升溫就會翻進 backwardation'
+        : '期貨比現貨貴(contango):市場覺得眼前還好、波動之後才會變高,屬常態結構';
+      vixText += `期限結構(現貨/近月期貨)${ratio.toFixed(2)}:${read}。`;
+    }
   }
 
   setRead(p, tag, [
@@ -1824,8 +1843,8 @@ function renderMiniTrend(container, def, series) {
   container.replaceChildren(svg.node());
 }
 
-// 八張迷你趨勢:VIX、美日 10 年利差、信用風險胃納 HYG/LQD、股債比 SPX/TLT、
-// 週期/防禦類股比(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
+// 九張迷你趨勢:VIX、VIX 期限結構、美日 10 年利差、信用風險胃納 HYG/LQD、
+// 股債比 SPX/TLT、週期/防禦類股比(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
 function macroTrendDefs() {
   const vix = scannerSeries(VIX_SYM);
   const defs = [];
@@ -1834,6 +1853,14 @@ function macroTrendDefs() {
       key: 'vix', label: 'VIX 恐慌指數', series: vix,
       fmt: v => v.toFixed(1), deltaUnit: ' 點', ref: 20, refLabel: '20 警戒',
       note: vix.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  const vixTerm = vixTermSeries();
+  if (vixTerm.length >= 2) {
+    defs.push({
+      key: 'vixterm', label: 'VIX 期限結構(現貨/近月期貨)', series: vixTerm,
+      fmt: v => v.toFixed(2), deltaUnit: ' 點', digits: 2, ref: 1, refLabel: '1.0 恐慌結構',
+      note: vixTerm.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
     });
   }
   const usjp = usJpSpreadSeries();

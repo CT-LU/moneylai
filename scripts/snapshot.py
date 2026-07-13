@@ -45,7 +45,8 @@ GLOBAL = [
     'FX_IDC:USDJPY',   # 美元兌日圓(台幣卡即時交叉價)
     'FX_IDC:EURUSD',   # 歐元兌美元(台幣卡即時交叉價)
 ]
-FUTURES = ['NYMEX:CL1!', 'ICEEUR:BRN1!']   # 原油 WTI / 布蘭特
+FUTURES = ['NYMEX:CL1!', 'ICEEUR:BRN1!',   # 原油 WTI / 布蘭特
+           'CBOE:VX1!']                    # VIX 近月期貨(期限結構)
 COLS = ['close', 'Perf.W', 'Perf.1M', 'Perf.3M']
 
 OUT = Path(__file__).resolve().parent.parent / 'data' / 'history.json'
