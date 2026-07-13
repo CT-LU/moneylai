@@ -1400,7 +1400,8 @@ function vixPoint() {
   return { now: q.close, dW: wAgo !== null ? q.close - wAgo : null };
 }
 
-// 美日 10 年利差(百分點):日圓套利交易的引擎;收窄 = 平倉壓力(risk-off 前哨)
+// 美日 10 年利差(百分點):日圓套利交易的引擎;收窄 = 平倉壓力(risk-off 前哨)。
+// 走闊只代表套利誘因升溫,不等於 risk-on(常來自美債殖利率上升,對股債反而是壓力)
 function usJpSpread() {
   const us = state.scanner?.['TVC:US10Y'];
   const jp = state.scanner?.[JP10Y_SYM];
@@ -1417,6 +1418,14 @@ function usJpSpreadSeries() {
   const jp = new Map(scannerSeries(JP10Y_SYM).map(p => [p.date, p.value]));
   return scannerSeries('TVC:US10Y')
     .flatMap(p => jp.has(p.date) ? [{ date: p.date, value: p.value - jp.get(p.date) }] : []);
+}
+
+// 信用風險胃納的跨日累積序列:HYG/LQD 比值 ×100(升 = 資金敢買高收益債);
+// 同日兩檔都有紀錄才算得出來,啟用初期只有少數點
+function hygLqdSeries() {
+  const lqd = new Map(scannerSeries(LQD_SYM).map(p => [p.date, p.value]));
+  return scannerSeries(HYG_SYM)
+    .flatMap(p => lqd.has(p.date) ? [{ date: p.date, value: p.value / lqd.get(p.date) * 100 }] : []);
 }
 
 function renderBondChart(data) {
@@ -1635,7 +1644,7 @@ function renderRiskRead() {
       : sp.now >= 1 ? '毛利已偏薄:新錢進場的誘因低,既有套利部位對利差再收窄會更敏感'
       : '扣掉匯率避險成本後幾乎無利可圖,套利生意接近做不下去,資金回流日本的壓力大';
     const verdict = bp === null || Math.abs(bp) < 3 ? '本週利差變化有限,套利盤按兵不動'
-      : bp > 0 ? '本週利差走闊:利潤變厚,借日圓買美元資產的套利更活絡(偏 risk-on)'
+      : bp > 0 ? '本週利差走闊:毛利變厚,借日圓做套利的誘因增加——但這只代表套利誘因升溫,不等於 risk-on:走闊常來自美債殖利率上升(通膨或降息延後的疑慮),對股債反而可能是壓力;這項指標真正的警訊在收窄端(平倉壓力)'
       : '本週利差收窄:利潤變薄,賣美元資產、買回日圓還錢的平倉壓力升溫——收得又快又多時常拖累全球風險資產(2024-08 日圓套利平倉即一例)';
     parts.push(`套利端:美日 10 年利差 ${sp.now.toFixed(2)} 個百分點` +
       (bp === null ? '' : `(週${fmtBp(bp, 0)})`) +
@@ -1768,7 +1777,8 @@ function renderMiniTrend(container, def, series) {
   container.replaceChildren(svg.node());
 }
 
-// 五張迷你趨勢:VIX、美日 10 年利差(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
+// 六張迷你趨勢:VIX、美日 10 年利差、信用風險胃納 HYG/LQD(皆 scanner 跨日累積)
+// + 核心 PCE / 非農 / 失業率(月資料)
 function macroTrendDefs() {
   const vix = scannerSeries(VIX_SYM);
   const defs = [];
@@ -1785,6 +1795,14 @@ function macroTrendDefs() {
       key: 'usjp', label: '美日 10 年利差(百分點)', series: usjp,
       fmt: v => v.toFixed(2), deltaUnit: ' 百分點', digits: 2, ref: null,
       note: usjp.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
+    });
+  }
+  const credit = hygLqdSeries();
+  if (credit.length >= 2) {
+    defs.push({
+      key: 'credit', label: '信用風險胃納 HYG/LQD(×100)', series: credit,
+      fmt: v => v.toFixed(2), deltaUnit: ' 點', digits: 2, ref: null,
+      note: credit.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
     });
   }
   if (state.macro) {
