@@ -1843,18 +1843,12 @@ function renderMiniTrend(container, def, series) {
   container.replaceChildren(svg.node());
 }
 
-// 九張迷你趨勢:VIX、VIX 期限結構、美日 10 年利差、信用風險胃納 HYG/LQD、
-// 股債比 SPX/TLT、週期/防禦類股比(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)
+// 八張迷你趨勢:VIX 期限結構、美日 10 年利差、信用風險胃納 HYG/LQD、
+// 股債比 SPX/TLT、週期/防禦類股比(皆 scanner 跨日累積)+ 核心 PCE / 非農 / 失業率(月資料)。
+// 現貨 VIX 不做小卡(2026-07 使用者決定只留期限結構——水位門檻在不同波動環境會漂移,
+// 判斷力不如翻過 1.0 的結構訊號;VIX 現值/週變化/四區判讀仍在股市端文字)
 function macroTrendDefs() {
-  const vix = scannerSeries(VIX_SYM);
   const defs = [];
-  if (vix.length >= 2) {
-    defs.push({
-      key: 'vix', label: 'VIX 恐慌指數', series: vix,
-      fmt: v => v.toFixed(1), deltaUnit: ' 點', ref: 20, refLabel: '20 警戒',
-      note: vix.length < 6 ? '跨日累積中,趨勢點會逐日增加' : '',
-    });
-  }
   const vixTerm = vixTermSeries();
   if (vixTerm.length >= 2) {
     defs.push({
