@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # 每日行情快照:抓 TradingView scanner 的收盤價,累積到 data/history.json
 # (格式 {sym: {date: close}},與前端 localStorage 的 moneylai-scanner-history 同構)。
-# 由 GitHub Actions 每個交易日收盤後執行一次;前端以相對路徑讀取並與本機累積合併,
-# 讓熱力圖的逐週歷史不再綁定單一瀏覽器。
-# 注意:標的清單必須與 app.js 的 SCANNER_ALL 保持同步(兩邊都有註記)。
+# 另抓 ETF 的申贖基礎資料(流通股數/NAV/AUM)累積到 data/etf.json —— scanner 的
+# fund_flows.* 只有 1M/3M/YTD/1Y/5Y 區間,日頻流量要靠「Δ流通股數 × NAV」自己累積。
+# 由 GitHub Actions 每個交易日收盤後執行一次;前端以相對路徑讀取並與本機累積合併。
+# 注意:GLOBAL/FUTURES 必須與 app.js 的 SCANNER_ALL、ETF_TICKERS 必須與
+# app.js 的 ETF_FLOW_LIST 保持同步(兩邊都有註記)。
 
 import json
 import urllib.request
@@ -11,26 +13,14 @@ from datetime import date, timedelta
 from pathlib import Path
 
 GLOBAL = [
-    'OANDA:XCUUSD',    # 銅
-    'NASDAQ:ICLN',     # 綠能
-    'NASDAQ:AIQ',      # AI
-    'SP:SPX',          # 美股 S&P 500
-    'NASDAQ:IXIC',     # 美股 NASDAQ
-    'NASDAQ:SOX',      # 美股 費半
-    'TVC:NI225',       # 日股
-    'TVC:SX5E',        # 歐股
-    'SSE:000001',      # 中國股 上證
-    'SZSE:399001',     # 中國股 深證
-    'TVC:HSI',         # 香港 恒生
-    'NASDAQ:TLT',      # 債市
+    'SP:SPX',          # 美股 S&P 500(股債比)
+    'NASDAQ:TLT',      # 債市 TLT
     'TVC:US02Y',       # 美債 2 年
     'TVC:US10Y',       # 美債 10 年
     'TVC:US30Y',       # 美債 30 年
     'TVC:VIX',         # VIX
     'FX_IDC:USDTWD',   # 美元兌台幣
-    'FX_IDC:USDVND',   # 美元兌越南盾(區域卡越南列)
     'TVC:JP10Y',       # 日債 10 年(美日利差)
-    'TVC:GOLD',        # 黃金現貨(銅金比)
     'AMEX:HYG',        # 高收益債
     'AMEX:LQD',        # 投資級債
     'AMEX:XLK',        # 科技(週期/防禦類股比:週期籃)
@@ -45,31 +35,49 @@ GLOBAL = [
     'FX_IDC:USDJPY',   # 美元兌日圓(台幣卡即時交叉價)
     'FX_IDC:EURUSD',   # 歐元兌美元(台幣卡即時交叉價)
 ]
-FUTURES = ['NYMEX:CL1!', 'ICEEUR:BRN1!',   # 原油 WTI / 布蘭特
-           'CBOE:VX1!']                    # VIX 近月期貨(期限結構)
+FUTURES = ['CBOE:VX1!']   # VIX 近月期貨(期限結構)
 COLS = ['close', 'Perf.W', 'Perf.1M', 'Perf.3M']
 
-OUT = Path(__file__).resolve().parent.parent / 'data' / 'history.json'
-KEEP_DAYS = 200   # 保留天數(熱力圖最長只需 12 週,多留供未來使用)
+# ETF 真實資金流卡的標的(與 app.js 的 ETF_FLOW_LIST 同步)
+ETF_TICKERS = [
+    'NASDAQ:SOXX', 'NASDAQ:AIQ', 'NASDAQ:IBIT', 'AMEX:KWEB', 'CBOE:ITA',
+    'AMEX:XLV', 'NASDAQ:ICLN', 'AMEX:XLE', 'AMEX:URA', 'AMEX:GLD',
+    'AMEX:SLV', 'AMEX:COPX', 'AMEX:REMX', 'NASDAQ:TLT', 'NYSE:SGOV',
+    'AMEX:HYG', 'AMEX:LQD', 'NASDAQ:EMB',
+]
+ETF_COLS = ['shares_outstanding', 'nav', 'aum']
+
+ROOT = Path(__file__).resolve().parent.parent / 'data'
+OUT = ROOT / 'history.json'
+OUT_ETF = ROOT / 'etf.json'
+KEEP_DAYS = 200   # 保留天數
 
 
-def scan(market, tickers):
+def scan(market, tickers, cols):
     req = urllib.request.Request(
         f'https://scanner.tradingview.com/{market}/scan',
         data=json.dumps({'symbols': {'tickers': tickers, 'query': {'types': []}},
-                         'columns': COLS}).encode(),
+                         'columns': cols}).encode(),
         headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r).get('data') or []
 
 
+def prune(hist, tracked, cutoff):
+    # 修剪:只留 KEEP_DAYS 天,並汰除已不在清單的孤兒標的
+    return {sym: {dt: v for dt, v in sorted(days.items()) if dt >= cutoff}
+            for sym, days in hist.items() if sym in tracked}
+
+
 def main():
-    hist = json.loads(OUT.read_text()) if OUT.exists() else {}
     today = date.today()   # runner 為 UTC,與前端 isoDate 的 UTC 日一致
-    rows = scan('global', GLOBAL) + scan('futures', FUTURES)
+    cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
+
+    # --- 收盤價快照(聯準會卡迷你趨勢的逐日歷史) ---
+    hist = json.loads(OUT.read_text()) if OUT.exists() else {}
+    rows = scan('global', GLOBAL, COLS) + scan('futures', FUTURES, COLS)
     if not rows:
         raise SystemExit('scanner 無資料,不更新檔案')
-
     for item in rows:
         sym, d = item['s'], item['d']
         close = d[0]
@@ -82,17 +90,29 @@ def main():
             if isinstance(perf, (int, float)):
                 key = (today - timedelta(days=days)).isoformat()
                 h.setdefault(key, round(close / (1 + perf / 100), 6))
+    hist = prune(hist, set(GLOBAL) | set(FUTURES), cutoff)
 
-    # 修剪:只留 KEEP_DAYS 天,並汰除已不在清單的孤兒標的
-    cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
-    tracked = set(GLOBAL) | set(FUTURES)
-    hist = {sym: {dt: v for dt, v in sorted(days.items()) if dt >= cutoff}
-            for sym, days in hist.items() if sym in tracked}
-
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    ROOT.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(hist, ensure_ascii=False,
                               separators=(',', ':'), sort_keys=True) + '\n')
-    print(f'快照完成:{len(hist)} 檔標的,{today}')
+
+    # --- ETF 申贖基礎資料快照(日流量 ≈ Δ流通股數 × NAV,累積後供前端使用) ---
+    etf = json.loads(OUT_ETF.read_text()) if OUT_ETF.exists() else {}
+    n_etf = 0
+    for item in scan('global', ETF_TICKERS, ETF_COLS):
+        so, nav, aum = item['d']
+        if not isinstance(so, (int, float)) or not isinstance(nav, (int, float)):
+            continue
+        etf.setdefault(item['s'], {})[today.isoformat()] = {
+            'so': round(so), 'nav': round(nav, 4),
+            'aum': round(aum) if isinstance(aum, (int, float)) else None,
+        }
+        n_etf += 1
+    etf = prune(etf, set(ETF_TICKERS), cutoff)
+    OUT_ETF.write_text(json.dumps(etf, ensure_ascii=False,
+                                  separators=(',', ':'), sort_keys=True) + '\n')
+
+    print(f'快照完成:{len(hist)} 檔標的、ETF {n_etf} 檔,{today}')
 
 
 if __name__ == '__main__':

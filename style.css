@@ -2,7 +2,7 @@
    全球資金流向儀表板 — Neo-Memphis 風格
    設計語彙:高飽和撞色、粗黑邊框、硬偏移陰影(無模糊)、
    幾何裝飾(圓點網格、波浪 squiggle,全部內嵌 SVG,不外連)。
-   資料色(熱力圖 diverging、漲跌、美債線)皆通過 CVD/對比驗證,
+   資料色(流向 diverging、漲跌、美債線)皆通過 CVD/對比驗證,
    深色模式同結構換值。
    ============================================================ */
 
@@ -24,7 +24,7 @@
   --mem-purple: #7c4dff;
   --mem-orange: #ff8a3d;
 
-  /* 資料色:熱力圖 diverging(藍=上漲/流入、紅=下跌/流出、灰中點) */
+  /* 資料色:流向 diverging(藍=流入、紅=流出、灰中點) */
   --series-in:   #2a6fdb;
   --series-out:  #e8384f;
   --neutral-mid: #efe9db;
@@ -231,14 +231,13 @@ section { margin-bottom: 34px; }
 #twd-card     { --card-accent: var(--mem-cyan); }
 #foreign-card { --card-accent: #c9b3ff; }   /* 淺紫(裝飾色,非資料色) */
 #china-card   { --card-accent: #ffb3a0; }   /* 淺橘紅(裝飾色,非資料色) */
-#asset-card  { --card-accent: var(--mem-yellow); }
-#region-card { --card-accent: #3fd1d1; }
-#bond-card   { --card-accent: var(--mem-pink); }
+#etfflow-card { --card-accent: var(--mem-yellow); }
+#bond-card    { --card-accent: var(--mem-pink); }
 
 /* 資料重新載入:保留前次渲染、降透明度,不跳版 */
 .refreshing { opacity: 0.55; transition: opacity 0.2s; }
 
-/* ===== 控制列:週數/檢視切換(segmented) ===== */
+/* ===== 控制列:週數/統計期間切換(segmented) ===== */
 .card-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .seg-toggle {
   display: flex;
@@ -261,31 +260,6 @@ section { margin-bottom: 34px; }
 .seg-toggle button:last-child { border-right: none; }
 .seg-toggle button.active { background: var(--mem-yellow); color: #17141a; }
 .seg-label { font-size: 12px; color: var(--text-muted); }
-
-/* ===== 熱力圖 ===== */
-.heatmap-wrap { margin-top: 6px; }
-.heatmap-wrap svg { display: block; width: 100%; height: auto; }
-.hm-legend {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  font-size: 12px; color: var(--text-muted); margin-top: 10px;
-}
-.hm-legend svg { display: block; }
-
-/* 表格檢視(無障礙的等價版本) */
-.region-table { overflow-x: auto; margin-top: 8px; }
-.region-table table {
-  border-collapse: collapse; width: 100%; font-size: 13px;
-  border: 2.5px solid var(--ink);
-}
-.region-table th, .region-table td {
-  text-align: left; padding: 7px 12px;
-  border-bottom: 1.5px solid var(--grid);
-}
-.region-table th { color: var(--text-primary); font-weight: 800; background: var(--neutral-mid); border-bottom: 2.5px solid var(--ink); }
-.region-table td.num { font-variant-numeric: tabular-nums; text-align: right; }
-.region-table .up   { color: var(--delta-up); font-weight: 600; }
-.region-table .down { color: var(--delta-down); font-weight: 600; }
-.region-table .na   { color: var(--text-muted); }
 
 .card-footnote { font-size: 12px; color: var(--text-muted); margin: 14px 0 0; }
 

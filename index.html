@@ -6,7 +6,7 @@
 <title>錢錢流向儀表板</title>
 <!-- ?v= 為快取破壞參數:style.css / app.js 有改動時要一起遞增,
      否則 GitHub Pages 的 10 分鐘快取會讓使用者拿到新舊混雜的檔案 -->
-<link rel="stylesheet" href="style.css?v=4">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 <div class="viz-root">
@@ -15,20 +15,16 @@
   <header class="page-header">
     <div>
       <h1>錢錢流向儀表板</h1>
-      <p class="subtitle">追蹤熱錢的去向:美元、日圓套利、加密貨幣、黃金、原油與 AI 板塊</p>
+      <p class="subtitle">追蹤熱錢的去向:台幣與台股外資、中國資金、聯準會風向與 ETF 真實資金流</p>
     </div>
     <div class="update-status">
       <button id="refresh-btn" type="button">立即更新</button>
-      <div class="status-line">
-        <span class="status-dot" id="dot-crypto" title="加密貨幣資料狀態"></span>加密資料
-        <span id="ts-crypto" class="ts">--</span>
-      </div>
       <div class="status-line">
         <span class="status-dot" id="dot-fx" title="匯率資料狀態"></span>匯率資料
         <span id="ts-fx" class="ts">--</span>
       </div>
       <div class="status-line">
-        <span class="status-dot" id="dot-scanner" title="商品、債券與 VIX 報價狀態"></span>商品債券
+        <span class="status-dot" id="dot-scanner" title="債券與 VIX 報價狀態"></span>債券報價
         <span id="ts-scanner" class="ts">--</span>
       </div>
       <div class="status-line">
@@ -118,76 +114,37 @@
     <p class="card-footnote">核心 PCE 年增率(BEA,經 DBnomics)與非農/失業率(美國勞工統計局 BLS)為月資料,發布有時滯;VIX 期限結構(現貨/近月期貨,>1 = backwardation 恐慌結構)、美日 10 年利差、信用風險胃納(HYG/LQD)、股債比(S&P 500/TLT)與週期/防禦類股比的趨勢由本站每日快照與瀏覽器跨日累積合併而成,啟用初期僅有少數點位。</p>
   </section>
 
-  <!-- ===== 資產資金流向(近 N 週熱力圖)===== -->
-  <section class="card" id="asset-card">
+  <!-- ===== ETF 真實資金流(申購/贖回)===== -->
+  <section class="card" id="etfflow-card">
     <div class="card-head">
-      <h2 class="card-title">資產資金流向</h2>
+      <h2 class="card-title">ETF 真實資金流</h2>
       <div class="card-controls">
-        <span class="seg-label">觀察期間</span>
-        <div class="seg-toggle" id="asset-weeks" role="tablist">
-          <button type="button" data-weeks="1" class="active">1 週</button>
-          <button type="button" data-weeks="4">4 週</button>
-          <button type="button" data-weeks="8">8 週</button>
-          <button type="button" data-weeks="12">12 週</button>
-        </div>
-        <div class="seg-toggle" id="asset-scale" role="tablist">
-          <button type="button" data-scale="pct">漲跌 %</button>
-          <button type="button" data-scale="z" class="active">波動標準化</button>
-        </div>
-        <div class="seg-toggle" role="tablist">
-          <button type="button" id="btn-asset-chart" class="active" aria-pressed="true">熱力圖</button>
-          <button type="button" id="btn-asset-table" aria-pressed="false">表格</button>
+        <span class="seg-label">統計期間</span>
+        <div class="seg-toggle" id="etfflow-period" role="tablist">
+          <button type="button" data-period="1M" class="active">1 月</button>
+          <button type="button" data-period="3M">3 月</button>
+          <button type="button" data-period="YTD">今年以來</button>
+          <button type="button" data-period="1Y">1 年</button>
         </div>
       </div>
     </div>
-    <p class="card-desc"><span class="desc-body">列=資產、欄=週(左舊右新;觀察期間選 1 週時欄=日,格=該日漲跌,「今天」欄為即時值,週末休市或資料尚未累積的日子顯示白底斜線格,約一週後補齊),藍=該週上漲(資金流入傾向)、紅=下跌(流出)。顏色預設為波動標準化(σ):該週漲跌除以各資產自身的週波動度——比特幣週漲 3% 是日常、美元指數漲 3% 是大事,深淺代表「這個動作對該資產有多不尋常」,跨資產才可比,|σ| 超過 2 就值得注意;切到「漲跌 %」可改看原始幅度。橫著看一列 = 單一資產的輪動;直著看一欄 = 該週錢停在哪。本週格右上角的小圓點=今日放量(成交量 ≥ 近 10 日均量的 1.5 倍)——價格動作有量在背書,不是縮量虛動,確切量比滑到格子上可見(外匯與現貨金屬沒有集中成交量,無此標記)。點任一週的欄位(欄標或色格),列會依該週漲跌重新排序,回看當週錢停在哪;再點一次回到本週。滑到任一列上,會直接在圖上疊出該資產的名次軌跡線——線在各週間的起伏就是名次變化:往上竄=錢湧向它、往下沉=錢離開它;滑到格子上可看該週名次與幅度。</span></p>
-    <p class="bond-read" id="asset-summary"></p>
-    <div id="asset-heatmap" class="heatmap-wrap"></div>
-    <div class="hm-legend" id="asset-legend"></div>
-    <div id="asset-table" class="region-table" hidden></div>
-    <p class="card-footnote">原油(WTI/布蘭特)、銅、綠能(ICLN)、AI(AIQ)、各股指(美股/日股/歐股/中國股/香港)與債市(TLT)的報價來自 TradingView,即時只能取得近一週與近一月表現;更早的逐週資料由本站每日快照(每個交易日自動記錄一次)與瀏覽器跨日累積合併補齊——換裝置或清瀏覽器也不會歸零,啟用初期仍會顯示白底斜線格(資料累積中)。債市列用 TLT(20 年期以上美債 ETF):漲=資金流入債市避險、跌=流出。</p>
-  </section>
-
-  <!-- ===== 區域資金流向(近 N 週熱力圖)===== -->
-  <section class="card" id="region-card">
-    <div class="card-head">
-      <h2 class="card-title">區域資金流向</h2>
-      <div class="card-controls">
-        <span class="seg-label">觀察期間</span>
-        <div class="seg-toggle" id="region-weeks" role="tablist">
-          <button type="button" data-weeks="1" class="active">1 週</button>
-          <button type="button" data-weeks="4">4 週</button>
-          <button type="button" data-weeks="8">8 週</button>
-          <button type="button" data-weeks="12">12 週</button>
-        </div>
-        <div class="seg-toggle" id="region-scale" role="tablist">
-          <button type="button" data-scale="pct">升貶 %</button>
-          <button type="button" data-scale="z" class="active">波動標準化</button>
-        </div>
-        <div class="seg-toggle" role="tablist">
-          <button type="button" id="btn-region-chart" class="active" aria-pressed="true">熱力圖</button>
-          <button type="button" id="btn-region-table" aria-pressed="false">表格</button>
-        </div>
-      </div>
-    </div>
-    <p class="card-desc"><span class="desc-body">以各區域貨幣兌美元的每週升貶值作為資金流入/流出的代理指標(觀察期間選 1 週時改看每日升貶;匯市週末休市,週末欄顯示白底斜線格):藍=貨幣升值(資金流入傾向)、紅=貶值(流出)。顏色預設以各貨幣自身的週波動度(σ)為尺——低波動貨幣的小幅升貶,可能比高波動貨幣的大幅波動更不尋常;切到「升貶 %」可改看原始幅度。點任一週的欄位(欄標或色格),列會依該週升貶重新排序;再點一次回到本週。滑到任一列上,會直接在圖上疊出該貨幣的名次軌跡線——往上竄=資金湧向它、往下沉=資金離開它;滑到格子上可看該週名次與幅度。</span></p>
-    <p class="bond-read" id="region-summary"></p>
-    <div id="region-heatmap" class="heatmap-wrap"></div>
-    <div class="hm-legend" id="region-legend"></div>
-    <div id="region-table" class="region-table" hidden></div>
-    <p class="card-footnote">台灣(美元兌台幣)的報價來自 TradingView(歐洲央行不提供台幣匯率),更早的逐週資料由本站每日快照與瀏覽器跨日累積合併補齊,啟用初期會顯示白底斜線格。</p>
+    <p class="card-desc"><span class="desc-body">價格是投票器,申購/贖回是真金白銀:ETF 的資金流=該期間投資人「申購−贖回」的實際金額,不是價格漲跌的代理——價漲但資金流出,代表漲勢沒有新錢背書。列=主題 ETF,長條=流量佔自身基金規模的百分比(跨檔才可比:現金停泊 SGOV 一天的量可能比稀土 REMX 整年還大),藍=淨申購(流入)、紅=淨贖回(流出),依佔比排序;實際金額與規模滑到列上可見。挑選涵蓋進攻端(半導體/AI/比特幣)、避險端(黃金/美長債/現金停泊)、信用端(非投等 vs 投資級)、能源轉型(綠能 vs 傳統能源 vs 鈾)、戰略金屬(銅礦/稀土)等對照組——資金往哪邊倒,risk-on/off 一目了然。</span></p>
+    <div class="macro-grid" id="etfflow-stats"></div>
+    <div id="etfflow-chart" class="twd-chart"></div>
+    <div class="twd-legend" id="etfflow-legend"></div>
+    <p class="bond-read" id="etfflow-read"></p>
+    <p class="card-footnote">資料來源:TradingView 的 ETF 申贖統計(約每個交易日更新一次,較收盤延後約一天),每小時輪詢;統計期間可切換近 1 月/3 月/今年以來/1 年(無週/日頻率的現成資料)。全部為美國掛牌 ETF,反映的是美元資金的配置動向。<span id="etfflow-status"></span></p>
   </section>
 
   <footer class="page-footer">
-    <p>資料來源:匯率 — <a href="https://frankfurter.dev" target="_blank" rel="noopener">Frankfurter API</a>(歐洲央行,每個交易日更新一次)·
-    加密貨幣與黃金(PAXG 代理)— <a href="https://www.coingecko.com" target="_blank" rel="noopener">CoinGecko</a>(每小時輪詢)·
-    原油(WTI/布蘭特)/銅/綠能/AI/美債殖利率/VIX/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
+    <p>資料來源:美債殖利率/VIX/股債報價/美元兌台幣 — TradingView 報價(每 2 分鐘輪詢)·
+    ETF 申贖資金流 — TradingView ETF 統計(每小時輪詢)·
     台股外資買賣超 — <a href="https://www.twse.com.tw" target="_blank" rel="noopener">臺灣證券交易所</a>(每交易日收盤後)·
     中國兩融/南向資金/滬深300 ETF — 東方財富(每交易日更新;ETF 分時盤中每 3 分鐘)·
     非農就業與失業率 — <a href="https://www.bls.gov/developers/" target="_blank" rel="noopener">美國勞工統計局 BLS</a> ·
     核心 PCE — BEA(經 <a href="https://db.nomics.world" target="_blank" rel="noopener">DBnomics</a>)·
     新台幣匯率 — <a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">currency-api</a>(每日更新)。</p>
-    <p>本頁為資訊參考工具,非投資建議。「資金流向」為以公開市價推估的代理判讀,無法直接觀測實際資金移動。</p>
+    <p>本頁為資訊參考工具,非投資建議。匯率與報價類指標為市價代理判讀;ETF 申贖、台股外資與中國兩融/南向為實際資金統計。</p>
   </footer>
 
 </div>
@@ -196,6 +153,6 @@
 <div id="tooltip" class="tooltip" hidden></div>
 
 <script src="d3.v7.min.js"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>
