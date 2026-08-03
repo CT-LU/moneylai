@@ -105,6 +105,8 @@ const ETF_FLOW_LIST = [
   { sym: 'AMEX:XLV',    name: '醫療 XLV' },
   { sym: 'NASDAQ:ICLN', name: '綠能 ICLN' },
   { sym: 'AMEX:XLE',    name: '傳統能源 XLE' },
+  { sym: 'AMEX:USO',    name: '原油 USO' },
+  { sym: 'AMEX:BNO',    name: '布蘭特油 BNO' },
   { sym: 'AMEX:URA',    name: '鈾/核能 URA' },
   { sym: 'AMEX:GLD',    name: '黃金 GLD',       group: 'safe' },
   { sym: 'AMEX:SLV',    name: '白銀 SLV' },
@@ -2280,6 +2282,10 @@ function renderEtfFlowRead(rows) {
   pair('NASDAQ:ICLN', 'AMEX:XLE', (i, e) => i.pct > e.pct
     ? `綠能(${fmtPct(i.pct)})壓過傳統能源(${fmtPct(e.pct)}),能源資金偏向轉型敘事`
     : `傳統能源(${fmtPct(e.pct)})壓過綠能(${fmtPct(i.pct)}),能源資金回頭擁抱油氣現金流`);
+  // USO=直接押油價的期貨 ETF、XLE=油氣公司股票:兩者分歧=押「油價本身」與押「這門生意」的分水嶺
+  pair('AMEX:USO', 'AMEX:XLE', (u, e) => u.pct > e.pct
+    ? `油價 ETF USO(${fmtPct(u.pct)})比能源股 XLE(${fmtPct(e.pct)})吸金——資金直接押油價漲,多於押油公司這門生意`
+    : `能源股 XLE(${fmtPct(e.pct)})比油價 ETF USO(${fmtPct(u.pct)})吸金——資金要的是油公司的現金流與股息,不是賭油價方向`);
   if (contrasts.length) items.push(`對照組:${contrasts.join(';')}。`);
 
   setRead(p, 'ETF 申贖合讀', items,
