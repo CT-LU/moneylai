@@ -127,9 +127,14 @@
           <button type="button" data-period="YTD">今年以來</button>
           <button type="button" data-period="1Y">1 年</button>
         </div>
+        <span class="seg-label">排序</span>
+        <div class="seg-toggle" id="etfflow-sort" role="tablist">
+          <button type="button" data-period="flow" class="active">資金流</button>
+          <button type="button" data-period="perf">價格</button>
+        </div>
       </div>
     </div>
-    <p class="card-desc"><span class="desc-body">價格是投票器,申購/贖回是真金白銀:ETF 的資金流=該期間投資人「申購−贖回」的實際金額,不是價格漲跌的代理——價漲但資金流出,代表漲勢沒有新錢背書。列=主題 ETF,長條=流量佔自身基金規模的百分比(跨檔才可比:現金停泊 SGOV 一天的量可能比稀土 REMX 整年還大),藍=淨申購(流入)、紅=淨贖回(流出),依佔比排序;右欄另列同一期間的「價格漲跌 %」——價格與資金流反向且幅度夠大會標 ※(價漲但贖回=漲勢沒新錢背書、價跌但申購=有真金白銀逢跌承接);實際金額與規模滑到列上可見。挑選涵蓋進攻端(半導體/AI/比特幣)、避險端(黃金/美長債/現金停泊)、信用端(非投等 vs 投資級)、能源(綠能 vs 傳統能源公司 vs 油價本身 USO/BNO vs 鈾)、戰略金屬(銅礦/稀土)等對照組——資金往哪邊倒,risk-on/off 一目了然。</span></p>
+    <p class="card-desc"><span class="desc-body">價格是投票器,申購/贖回是真金白銀:ETF 的資金流=該期間投資人「申購−贖回」的實際金額,不是價格漲跌的代理——價漲但資金流出,代表漲勢沒有新錢背書。列=主題 ETF,長條=流量佔自身基金規模的百分比(跨檔才可比:現金停泊 SGOV 一天的量可能比稀土 REMX 整年還大),藍=淨申購(流入)、紅=淨贖回(流出),預設依流量佔比排序、可切換依同期價格排序(價排序下藍紅錯落=價量不同步的整體圖像);右欄另列同一期間的「價格漲跌 %」——價格與資金流反向且幅度夠大會標 ※(價漲但贖回=漲勢沒新錢背書、價跌但申購=有真金白銀逢跌承接);實際金額與規模滑到列上可見。挑選涵蓋進攻端(半導體/AI/比特幣)、避險端(黃金/美長債/現金停泊)、信用端(非投等 vs 投資級)、能源(綠能 vs 傳統能源公司 vs 油價本身 USO/BNO vs 鈾)、戰略金屬(銅礦/稀土)等對照組——資金往哪邊倒,risk-on/off 一目了然。</span></p>
     <div class="macro-grid" id="etfflow-stats"></div>
     <div id="etfflow-chart" class="twd-chart"></div>
     <div class="twd-legend" id="etfflow-legend"></div>
@@ -154,6 +159,6 @@
 <div id="tooltip" class="tooltip" hidden></div>
 
 <script src="d3.v7.min.js"></script>
-<script src="app.js?v=23"></script>
+<script src="app.js?v=24"></script>
 </body>
 </html>

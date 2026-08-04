@@ -176,10 +176,11 @@ const state = {
   },
 };
 
-// 介面狀態:台幣匯率卡的觀察週數(1 週=每日取樣視窗)、ETF 資金流卡的統計期間
+// 介面狀態:台幣匯率卡的觀察週數(1 週=每日取樣視窗)、ETF 資金流卡的統計期間與排序
 const ui = {
   twdWeeks: 1,
   etfPeriod: '1M',
+  etfSort: 'flow',   // flow=依流量佔規模 %、perf=依同期價格漲跌 %
 };
 
 // ===== 小工具 =====
@@ -2088,6 +2089,12 @@ function etfFlowRows() {
       perf: Number.isFinite(perf) ? perf : null,   // 同期價格漲跌 %(缺值仍保留列)
     });
   }
+  // 排序可切換:量(流量佔規模)或價(同期價格,缺值排最後);
+  // 價排序下藍紅長條的錯落=價量不同步的整體圖像
+  if (ui.etfSort === 'perf') {
+    return rows.sort((a, b) =>
+      (b.perf ?? -Infinity) - (a.perf ?? -Infinity) || b.pct - a.pct);
+  }
   return rows.sort((a, b) => b.pct - a.pct);
 }
 
@@ -2138,7 +2145,9 @@ function renderEtfFlowStats(rows) {
   if (safe) boxes.push(mkBox(`避險端合計(${per})`, fmtUsdBillions(safe.flow),
     `黃金+美長債+現金,佔規模 ${fmtPct(safe.pct)}(${word(safe.pct)})`));
 
-  const top = rows[0], bottom = rows[rows.length - 1];
+  // 最強流入/流出一律看流量佔比極值,不隨排序切換而變
+  const byPct = [...rows].sort((a, b) => b.pct - a.pct);
+  const top = byPct[0], bottom = byPct[byPct.length - 1];
   if (top && top.pct > 0) boxes.push(mkBox(`最強流入(${per})`, top.name,
     `${fmtUsdBillions(top.flow)},佔自身規模 ${fmtPct(top.pct)}`));
   if (bottom && bottom.pct < 0) boxes.push(mkBox(`最強流出(${per})`, bottom.name,
@@ -2537,6 +2546,8 @@ function main() {
 
   initWeekToggle('#twd-weeks', 'twdWeeks', renderTwdCard);
   initPeriodToggle('#etfflow-period', 'etfPeriod', renderEtfFlowCard);
+  // 排序切換沿用同一套 seg-toggle 機制(按鈕一樣掛 data-period 屬性)
+  initPeriodToggle('#etfflow-sort', 'etfSort', renderEtfFlowCard);
 
   // 卡片說明折疊:滑鼠 hover 走純 CSS,點擊切換 .open 供觸控裝置開合
   for (const p of document.querySelectorAll('.card-desc')) {
