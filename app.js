@@ -2215,6 +2215,14 @@ function renderEtfFlowChart(rows) {
       .attr('fill', pos ? cIn : cOut)
       .attr('stroke', ink).attr('stroke-width', 1.2);
 
+    // 價量背離列:兩個數字欄整段刷 wheat 高亮底(全站高亮慣例,配深字),
+    // 讓「佔規模與同期價格不同步」一眼可掃,不必逐列找 ※;先畫底再疊文字
+    if (dv) svg.append('rect')
+      .attr('x', xFlowCol - 6).attr('y', y + 3.5)
+      .attr('width', width - m.right - xFlowCol + 6).attr('height', rowH - 7)
+      .attr('rx', 2.5)
+      .attr('fill', cssVar('--mem-yellow'));
+
     svg.append('text')
       .attr('x', xFlowCol).attr('y', y + rowH / 2 + 4)
       .attr('font-size', 12).attr('font-weight', 700)
@@ -2270,12 +2278,10 @@ function renderEtfFlowLegend() {
     chip.appendChild(document.createTextNode(text));
     return chip;
   };
-  // ※ 是文字標記不是色塊,圖例用純文字 chip 說明
-  const mkText = (text) => el('span', 'twd-chip', text);
   box.replaceChildren(
     mk(cssVar('--series-in'), '淨申購=真金白銀流入'),
     mk(cssVar('--series-out'), '淨贖回=資金撤出'),
-    mkText('※=價量背離(價格與資金流反向)'),
+    mk(cssVar('--mem-yellow'), '高亮※=價量背離(價格與資金流不同步)'),
   );
 }
 
