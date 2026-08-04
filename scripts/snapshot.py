@@ -40,10 +40,11 @@ COLS = ['close', 'Perf.W', 'Perf.1M', 'Perf.3M']
 
 # ETF 真實資金流卡的標的(與 app.js 的 ETF_FLOW_LIST 同步)
 ETF_TICKERS = [
-    'NASDAQ:SOXX', 'NASDAQ:AIQ', 'NASDAQ:IBIT', 'AMEX:KWEB', 'CBOE:ITA',
-    'AMEX:XLV', 'NASDAQ:ICLN', 'AMEX:XLE', 'AMEX:USO', 'AMEX:BNO',
-    'AMEX:URA', 'AMEX:GLD', 'AMEX:SLV', 'AMEX:COPX', 'AMEX:REMX',
-    'NASDAQ:TLT', 'NYSE:SGOV', 'AMEX:HYG', 'AMEX:LQD', 'NASDAQ:EMB',
+    'NASDAQ:SOXX', 'NASDAQ:AIQ', 'NASDAQ:IBIT', 'AMEX:IWM', 'AMEX:KWEB',
+    'CBOE:ITA', 'AMEX:XLV', 'NASDAQ:ICLN', 'AMEX:XLE', 'AMEX:USO',
+    'AMEX:BNO', 'AMEX:URA', 'AMEX:GLD', 'AMEX:GDX', 'AMEX:SLV',
+    'AMEX:COPX', 'AMEX:REMX', 'NASDAQ:TLT', 'AMEX:TIP', 'NYSE:SGOV',
+    'AMEX:HYG', 'AMEX:LQD', 'AMEX:KRE', 'NASDAQ:EMB', 'AMEX:EEM',
 ]
 ETF_COLS = ['shares_outstanding', 'nav', 'aum']
 

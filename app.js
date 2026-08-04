@@ -100,6 +100,7 @@ const ETF_FLOW_LIST = [
   { sym: 'NASDAQ:SOXX', name: '半導體 SOXX',    group: 'attack' },
   { sym: 'NASDAQ:AIQ',  name: 'AI AIQ',         group: 'attack' },
   { sym: 'NASDAQ:IBIT', name: '比特幣 IBIT',    group: 'attack' },
+  { sym: 'AMEX:IWM',    name: '小型股 IWM' },      // 風險胃納的廣度(不入進攻籃,免改變籃義)
   { sym: 'AMEX:KWEB',   name: '中國網路 KWEB' },
   { sym: 'CBOE:ITA',    name: '國防 ITA' },
   { sym: 'AMEX:XLV',    name: '醫療 XLV' },
@@ -109,14 +110,18 @@ const ETF_FLOW_LIST = [
   { sym: 'AMEX:BNO',    name: '布蘭特油 BNO' },
   { sym: 'AMEX:URA',    name: '鈾/核能 URA' },
   { sym: 'AMEX:GLD',    name: '黃金 GLD',       group: 'safe' },
+  { sym: 'AMEX:GDX',    name: '金礦股 GDX' },      // 與 GLD 對照:押金價 vs 押挖金這門生意
   { sym: 'AMEX:SLV',    name: '白銀 SLV' },
   { sym: 'AMEX:COPX',   name: '銅礦 COPX' },
   { sym: 'AMEX:REMX',   name: '稀土 REMX' },
   { sym: 'NASDAQ:TLT',  name: '美長債 TLT',     group: 'safe' },
+  { sym: 'AMEX:TIP',    name: '抗通膨債 TIP' },    // 通膨預期的真金白銀投票
   { sym: 'NYSE:SGOV',   name: '現金停泊 SGOV',  group: 'safe' },
   { sym: 'AMEX:HYG',    name: '非投等債 HYG' },
   { sym: 'AMEX:LQD',    name: '投資級債 LQD' },
+  { sym: 'AMEX:KRE',    name: '區域銀行 KRE' },    // 信用壓力金絲雀(股票投資人對銀行的投票)
   { sym: 'NASDAQ:EMB',  name: '新興市場債 EMB' },
+  { sym: 'AMEX:EEM',    name: '新興市場股 EEM' },  // 與 EMB 對照:敢買 EM 股 vs 只敢賺利差
 ];
 
 // perfCol=同一統計期間的價格報酬欄位(1Y 對應 Perf.Y,已驗證對 ETF 有值):
@@ -2349,6 +2354,14 @@ function renderEtfFlowRead(rows) {
   pair('AMEX:GLD', 'AMEX:SLV', (g, s) => g.pct > s.pct
     ? `黃金(${fmtPct(g.pct)})比白銀(${fmtPct(s.pct)})吸金——買的是避險而非貴金屬投機`
     : `白銀(${fmtPct(s.pct)})比黃金(${fmtPct(g.pct)})吸金——貴金屬買盤偏投機端`);
+  // GDX=挖金公司股票、GLD=金價本身:與 USO vs XLE 同構的「押價格 vs 押生意」
+  pair('AMEX:GLD', 'AMEX:GDX', (g, x) => g.pct > x.pct
+    ? `金價 ETF GLD(${fmtPct(g.pct)})比金礦股 GDX(${fmtPct(x.pct)})吸金——資金要的是避險純度,不是礦商的獲利槓桿`
+    : `金礦股 GDX(${fmtPct(x.pct)})比金價 ETF GLD(${fmtPct(g.pct)})吸金——金價行情獲得股票資金背書,買的是挖金生意的槓桿`);
+  // EEM=新興市場股票、EMB=新興市場美元債:熱錢南下的膽量分層
+  pair('AMEX:EEM', 'NASDAQ:EMB', (e, b) => e.pct > b.pct
+    ? `新興股 EEM(${fmtPct(e.pct)})比新興債 EMB(${fmtPct(b.pct)})吸金——熱錢敢直接買 EM 股票,南下膽量十足`
+    : `新興債 EMB(${fmtPct(b.pct)})比新興股 EEM(${fmtPct(e.pct)})吸金——資金只敢賺 EM 利差、不敢碰股票,南下但保守`);
   pair('NASDAQ:ICLN', 'AMEX:XLE', (i, e) => i.pct > e.pct
     ? `綠能(${fmtPct(i.pct)})壓過傳統能源(${fmtPct(e.pct)}),能源資金偏向轉型敘事`
     : `傳統能源(${fmtPct(e.pct)})壓過綠能(${fmtPct(i.pct)}),能源資金回頭擁抱油氣現金流`);
