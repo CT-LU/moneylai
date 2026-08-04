@@ -1,91 +1,64 @@
 /* ============================================================
-   全球資金流向儀表板 — Neo-Memphis 風格
-   設計語彙:高飽和撞色、粗黑邊框、硬偏移陰影(無模糊)、
-   幾何裝飾(圓點網格、波浪 squiggle,全部內嵌 SVG,不外連)。
-   資料色(流向 diverging、漲跌、美債線)皆通過 CVD/對比驗證,
-   深色模式同結構換值。
+   全球資金流向儀表板 — Neo-Memphis × 80s 街機霓虹
+   設計語彙:近黑深紫底 + 霓虹撞色(霓虹粉/電青/螢光黃/紫/橘)、
+   卡片粗淺框 + 霓虹紫硬偏移陰影(無模糊)、
+   幾何裝飾(青色圓點網格、波浪 squiggle,全部內嵌 SVG,不外連)。
+   單一深色定案主題(街機霓虹沒有淺色版),不再跟隨系統深淺設定。
+   資料色(流向 diverging、漲跌、美債線、台幣四線)皆通過
+   dataviz 六項檢查(CVD ΔE / L band / 對比,surface #1d1430):
+   diverging #3d87ea/#f0435c、漲跌 #e56060/#27995a(deutan 6.8
+   WARN 帶,靠全站強制 +/- 符號的次要編碼合法)、
+   四線與美債紫青 #9174f2/#17a5a5/#d67318/#ee3d8f。
    ============================================================ */
 
 .viz-root,
 :root {
-  /* 表面與文字 */
-  --page:           #f7efdd;
-  --surface-1:      #fffdf7;
-  --ink:            #17141a;   /* 邊框、硬陰影、主文字 */
-  --text-primary:   #17141a;
-  --text-secondary: #4c4653;
-  --text-muted:     #7f7889;
-  --grid:           #e5dcc8;
+  color-scheme: dark;
 
-  /* Memphis 裝飾色(僅裝飾,不當資料色) */
-  --mem-pink:   #ff5c8a;
-  --mem-cyan:   #10b3b3;
-  --mem-yellow: #ffd23f;
-  --mem-purple: #7c4dff;
-  --mem-orange: #ff8a3d;
+  /* 表面與文字 */
+  --page:           #130b21;
+  --surface-1:      #1d1430;
+  --ink:            #f2ecfa;   /* 邊框、主文字(淺薰衣草白) */
+  --shadow:         #6d28d9;   /* 硬偏移陰影(霓虹紫,深底上可見又不搶戲) */
+  --text-primary:   #f2ecfa;
+  --text-secondary: #c7bede;
+  --text-muted:     #8f84ab;
+  --grid:           #352a4e;
+
+  /* Memphis 霓虹裝飾色(僅裝飾,不當資料色) */
+  --mem-pink:   #ff2e88;
+  --mem-cyan:   #00e5ff;
+  --mem-yellow: #ffee32;
+  --mem-purple: #9d5cff;
+  --mem-orange: #ff9f1c;
 
   /* 資料色:流向 diverging(藍=流入、紅=流出、灰中點) */
-  --series-in:   #2a6fdb;
-  --series-out:  #e8384f;
-  --neutral-mid: #efe9db;
+  --series-in:   #3d87ea;
+  --series-out:  #f0435c;
+  --neutral-mid: #38304f;
 
   /* 漲跌文字(台灣習慣:紅漲綠跌;一律帶 +/- 符號,不靠顏色單獨表意) */
-  --delta-up:   #d63131;
-  --delta-down: #007a33;
+  --delta-up:   #e56060;
+  --delta-down: #27995a;
 
   /* 美債卡三條線:今天=墨色、一週前=紫、一月前=青 */
-  --bond-today: #17141a;
-  --bond-week:  #7c4dff;
-  --bond-month: #0f9b9b;
+  --bond-today: #f2ecfa;
+  --bond-week:  #9174f2;
+  --bond-month: #17a5a5;
 
   /* 台幣匯率卡四條線(固定順序:美元→日圓→歐元→人民幣,已過 CVD/對比驗證) */
-  --twd-usd: #7c4dff;
-  --twd-jpy: #0f9b9b;
-  --twd-eur: #c25a00;
-  --twd-cny: #d6246e;
+  --twd-usd: #9174f2;
+  --twd-jpy: #17a5a5;
+  --twd-eur: #d67318;
+  --twd-cny: #ee3d8f;
 
   /* 狀態 */
-  --status-good: #109148;
-  --status-bad:  #e8384f;
-  --status-warn: #f5a300;
+  --status-good: #27995a;
+  --status-bad:  #f0435c;
+  --status-warn: #ffb020;
 
-  /* 頁面底的圓點網格 */
-  --dot: rgba(23, 20, 26, 0.10);
-}
-
-@media (prefers-color-scheme: dark) {
-  .viz-root,
-  :root {
-    --page:           #16131c;
-    --surface-1:      #201d26;
-    --ink:            #f4eee1;
-    --text-primary:   #f4eee1;
-    --text-secondary: #c9c2b8;
-    --text-muted:     #90899c;
-    --grid:           #37323f;
-
-    --series-in:   #4a83e8;
-    --series-out:  #e04a59;
-    --neutral-mid: #322e3a;
-
-    --delta-up:   #e56060;
-    --delta-down: #27995a;
-
-    --bond-today: #f4eee1;
-    --bond-week:  #9377f0;
-    --bond-month: #1ba8a8;
-
-    --twd-usd: #9377f0;
-    --twd-jpy: #1ba8a8;
-    --twd-eur: #d97728;
-    --twd-cny: #e85586;
-
-    --status-good: #27995a;
-    --status-bad:  #e04a59;
-    --status-warn: #f5a300;
-
-    --dot: rgba(244, 238, 225, 0.07);
-  }
+  /* 頁面底的圓點網格(電青,街機網格感) */
+  --dot: rgba(0, 229, 255, 0.09);
 }
 
 * { box-sizing: border-box; }
@@ -115,7 +88,7 @@ h1 {
   letter-spacing: 0.5px;
   margin: 0 0 6px;
   /* 粉紅 squiggle 底線 */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='10' viewBox='0 0 36 10'%3E%3Cpath d='M0 5 Q4.5 0 9 5 T18 5 T27 5 T36 5' fill='none' stroke='%23ff5c8a' stroke-width='3'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='10' viewBox='0 0 36 10'%3E%3Cpath d='M0 5 Q4.5 0 9 5 T18 5 T27 5 T36 5' fill='none' stroke='%23ff2e88' stroke-width='3'/%3E%3C/svg%3E");
   background-repeat: repeat-x;
   background-position: left bottom;
   padding-bottom: 12px;
@@ -172,12 +145,12 @@ section { margin-bottom: 34px; }
   font-size: 13px;
   font-weight: 800;
   cursor: pointer;
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: 3px 3px 0 var(--shadow);
   transition: transform 0.08s, box-shadow 0.08s;
 }
-#refresh-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--ink); }
-#refresh-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--ink); }
-#refresh-btn:disabled { opacity: 0.5; cursor: wait; transform: none; box-shadow: 3px 3px 0 var(--ink); }
+#refresh-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--shadow); }
+#refresh-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow); }
+#refresh-btn:disabled { opacity: 0.5; cursor: wait; transform: none; box-shadow: 3px 3px 0 var(--shadow); }
 
 /* ===== 卡片 ===== */
 .card {
@@ -185,7 +158,7 @@ section { margin-bottom: 34px; }
   border: 3px solid var(--ink);
   border-radius: 16px;
   padding: 22px;
-  box-shadow: 8px 8px 0 var(--ink);
+  box-shadow: 8px 8px 0 var(--shadow);
 }
 .card-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .card-desc { color: var(--text-secondary); font-size: 13px; margin: 10px 0 12px; }
@@ -209,11 +182,11 @@ section { margin-bottom: 34px; }
   background: var(--surface-1);
   border: 2.5px solid var(--ink);
   border-radius: 10px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
   padding: 10px 14px;
 }
 .card-desc:hover::before,
-.card-desc.open::before { background: var(--mem-yellow); color: #17141a; border-style: solid; border-color: var(--ink); }
+.card-desc.open::before { background: var(--mem-yellow); color: #17141a; border-style: solid; border-color: #17141a; }
 .card-desc:hover .desc-body,
 .card-desc.open .desc-body { display: block; }
 
@@ -224,13 +197,13 @@ section { margin-bottom: 34px; }
   color: #17141a;
   border: 2.5px solid var(--ink);
   border-radius: 9px;
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: 3px 3px 0 var(--shadow);
   padding: 4px 14px;
   transform: rotate(-0.8deg);
 }
 #twd-card     { --card-accent: var(--mem-cyan); }
-#foreign-card { --card-accent: #c9b3ff; }   /* 淺紫(裝飾色,非資料色) */
-#china-card   { --card-accent: #ffb3a0; }   /* 淺橘紅(裝飾色,非資料色) */
+#foreign-card { --card-accent: #b18cff; }   /* 霓虹淺紫(裝飾色,非資料色) */
+#china-card   { --card-accent: #ff8f6b; }   /* 霓虹珊瑚橘(裝飾色,非資料色) */
 #etfflow-card { --card-accent: var(--mem-yellow); }
 #bond-card    { --card-accent: var(--mem-pink); }
 
@@ -245,7 +218,7 @@ section { margin-bottom: 34px; }
   border-radius: 10px;
   overflow: hidden;
   background: var(--surface-1);
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: 3px 3px 0 var(--shadow);
 }
 .seg-toggle button {
   background: transparent;
@@ -284,7 +257,7 @@ section { margin-bottom: 34px; }
   border: 2.5px solid var(--ink);
   border-radius: 12px;
   padding: 10px 14px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
   background: var(--surface-1);
 }
 .bond-stat .label { font-size: 12px; color: var(--text-secondary); font-weight: 700; }
@@ -308,7 +281,7 @@ section { margin-bottom: 34px; }
   border: 2.5px solid var(--ink);
   border-radius: 12px;
   padding: 10px 14px 8px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
   background: var(--surface-1);
 }
 .macro-head {
@@ -368,7 +341,7 @@ section { margin-bottom: 34px; }
   font-weight: 800;
   line-height: 1;
   padding: 2px 6px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid #17141a;
   border-radius: 999px;
   background: var(--mem-yellow);
   color: #17141a;
@@ -397,9 +370,10 @@ section { margin-bottom: 34px; }
   background: #ffffff;
   color: #17141a;
   font-weight: 700;
-  border: 2.5px solid var(--ink);
+  /* 底色固定白,框與陰影用固定深色(不吃 --ink:霓虹主題的 ink 是淺色,白底上會看不見) */
+  border: 2.5px solid #17141a;
   border-radius: 12px;
-  box-shadow: 3px 3px 0 var(--ink);
+  box-shadow: 3px 3px 0 #17141a;
   padding: 10px 14px 12px;
 }
 .bond-read:empty { display: none; }   /* 資料未到時不畫空白框 */
@@ -429,7 +403,7 @@ section { margin-bottom: 34px; }
   background: var(--surface-1);
   border: 2.5px solid var(--ink);
   border-radius: 10px;
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: 4px 4px 0 var(--shadow);
   padding: 8px 12px;
   font-size: 12.5px;
   pointer-events: none;
@@ -445,7 +419,7 @@ section { margin-bottom: 34px; }
   border-top: 3px solid var(--ink);
   padding-top: 14px;
   /* 頁尾上緣一排青色圓點 */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='8' viewBox='0 0 24 8'%3E%3Ccircle cx='4' cy='4' r='2.5' fill='%2310b3b3'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='8' viewBox='0 0 24 8'%3E%3Ccircle cx='4' cy='4' r='2.5' fill='%2300e5ff'/%3E%3C/svg%3E");
   background-repeat: repeat-x;
   background-position: left 6px;
   padding-top: 22px;
