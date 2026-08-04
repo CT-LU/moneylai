@@ -1055,7 +1055,7 @@ function renderMiniTrend(container, def, series) {
   const cGrid = cssVar('--grid');
   const cMuted = cssVar('--text-muted');
   const surface = cssVar('--surface-1');
-  const accent = cssVar('--mem-yellow');
+  const accent = cssVar('--chart-accent');
 
   const pts = series.map(p => ({ ...p, t: new Date(p.date).getTime() }));
   const x = d3.scaleTime()

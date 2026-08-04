@@ -1,64 +1,66 @@
 /* ============================================================
-   全球資金流向儀表板 — Neo-Memphis × 80s 街機霓虹
-   設計語彙:近黑深紫底 + 霓虹撞色(霓虹粉/電青/螢光黃/紫/橘)、
-   卡片粗淺框 + 霓虹紫硬偏移陰影(無模糊)、
-   幾何裝飾(青色圓點網格、波浪 squiggle,全部內嵌 SVG,不外連)。
-   單一深色定案主題(街機霓虹沒有淺色版),不再跟隨系統深淺設定。
+   全球資金流向儀表板 — FT 報紙風(Financial Times 風格)
+   設計語彙:鮭魚粉紙底(#fff1e5)、墨黑細線框(1px)與雙細線
+   分隔(報紙 rule)、方角(2px)、無陰影平面卡片、
+   襯線標題(Georgia 系)+ 無襯線內文與數字。
+   單一淺色定案主題(報紙沒有深色版),不跟隨系統深淺設定。
    資料色(流向 diverging、漲跌、美債線、台幣四線)皆通過
-   dataviz 六項檢查(CVD ΔE / L band / 對比,surface #1d1430):
-   diverging #3d87ea/#f0435c、漲跌 #e56060/#27995a(deutan 6.8
-   WARN 帶,靠全站強制 +/- 符號的次要編碼合法)、
-   四線與美債紫青 #9174f2/#17a5a5/#d67318/#ee3d8f。
+   dataviz 六項檢查(CVD ΔE / L band / 對比,surface #fff8f1):
+   diverging oxford 藍 #0f5499/claret #990f3d、
+   漲跌 #d63131/#007a33(protan 7.2 WARN 帶,靠全站強制 +/-
+   符號的次要編碼合法)、四線 #6f46a8/#0097a8/#b8641a/#990f3d。
    ============================================================ */
 
 .viz-root,
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
-  /* 表面與文字 */
-  --page:           #130b21;
-  --surface-1:      #1d1430;
-  --ink:            #f2ecfa;   /* 邊框、主文字(淺薰衣草白) */
-  --shadow:         #6d28d9;   /* 硬偏移陰影(霓虹紫,深底上可見又不搶戲) */
-  --text-primary:   #f2ecfa;
-  --text-secondary: #c7bede;
-  --text-muted:     #8f84ab;
-  --grid:           #352a4e;
+  /* 表面與文字(FT 鮭魚粉紙) */
+  --page:           #fff1e5;
+  --surface-1:      #fff8f1;
+  --ink:            #33302e;   /* 邊框、細線、主文字(FT 墨黑) */
+  --text-primary:   #33302e;
+  --text-secondary: #5f5854;
+  --text-muted:     #8c837c;
+  --grid:           #e8d9ca;
 
-  /* Memphis 霓虹裝飾色(僅裝飾,不當資料色) */
-  --mem-pink:   #ff2e88;
-  --mem-cyan:   #00e5ff;
-  --mem-yellow: #ffee32;
-  --mem-purple: #9d5cff;
-  --mem-orange: #ff9f1c;
+  /* FT 强調色(僅裝飾/介面,不當資料色;沿用 mem-* 變數名以免全檔改名) */
+  --mem-pink:   #990f3d;   /* claret 酒紅(FT 招牌色) */
+  --mem-cyan:   #0d7680;   /* teal */
+  --mem-yellow: #f2dfce;   /* wheat 小麥底(高亮底色,配深字) */
+  --mem-purple: #0f5499;   /* oxford 藍 */
+  --mem-orange: #b8641a;   /* 赭橘 */
 
-  /* 資料色:流向 diverging(藍=流入、紅=流出、灰中點) */
-  --series-in:   #3d87ea;
-  --series-out:  #f0435c;
-  --neutral-mid: #38304f;
+  /* 圖表端點/參考強調色(app.js cssVar 取用;不能用 wheat,會沉入底色) */
+  --chart-accent: #990f3d;
+
+  /* 資料色:流向 diverging(藍=流入、紅=流出、中點) */
+  --series-in:   #0f5499;
+  --series-out:  #990f3d;
+  --neutral-mid: #f0e1d2;
 
   /* 漲跌文字(台灣習慣:紅漲綠跌;一律帶 +/- 符號,不靠顏色單獨表意) */
-  --delta-up:   #e56060;
-  --delta-down: #27995a;
+  --delta-up:   #d63131;
+  --delta-down: #007a33;
 
   /* 美債卡三條線:今天=墨色、一週前=紫、一月前=青 */
-  --bond-today: #f2ecfa;
-  --bond-week:  #9174f2;
-  --bond-month: #17a5a5;
+  --bond-today: #33302e;
+  --bond-week:  #6f46a8;
+  --bond-month: #0097a8;
 
   /* 台幣匯率卡四條線(固定順序:美元→日圓→歐元→人民幣,已過 CVD/對比驗證) */
-  --twd-usd: #9174f2;
-  --twd-jpy: #17a5a5;
-  --twd-eur: #d67318;
-  --twd-cny: #ee3d8f;
+  --twd-usd: #6f46a8;
+  --twd-jpy: #0097a8;
+  --twd-eur: #b8641a;
+  --twd-cny: #990f3d;
 
   /* 狀態 */
-  --status-good: #27995a;
-  --status-bad:  #f0435c;
-  --status-warn: #ffb020;
+  --status-good: #007a33;
+  --status-bad:  #990f3d;
+  --status-warn: #c96a00;
 
-  /* 頁面底的圓點網格(電青,街機網格感) */
-  --dot: rgba(0, 229, 255, 0.09);
+  /* 襯線標題字族(標題/刊頭用;內文與數字維持無襯線) */
+  --serif: Georgia, "Times New Roman", "Noto Serif TC", "Songti TC", PMingLiU, serif;
 }
 
 * { box-sizing: border-box; }
@@ -68,9 +70,6 @@
 body {
   margin: 0;
   background-color: var(--page);
-  /* Memphis 圓點網格底 */
-  background-image: radial-gradient(circle, var(--dot) 1.4px, transparent 1.5px);
-  background-size: 26px 26px;
   color: var(--text-primary);
   font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
   line-height: 1.55;
@@ -83,24 +82,21 @@ body {
 }
 
 h1 {
-  font-size: 30px;
+  font-family: var(--serif);
+  font-size: 34px;
   font-weight: 900;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.2px;
   margin: 0 0 6px;
-  /* 粉紅 squiggle 底線 */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='10' viewBox='0 0 36 10'%3E%3Cpath d='M0 5 Q4.5 0 9 5 T18 5 T27 5 T36 5' fill='none' stroke='%23ff2e88' stroke-width='3'/%3E%3C/svg%3E");
-  background-repeat: repeat-x;
-  background-position: left bottom;
-  padding-bottom: 12px;
+  padding-bottom: 4px;
   display: inline-block;
 }
 
-h2 { font-size: 17px; margin: 0; }
+h2 { font-family: var(--serif); font-size: 17px; margin: 0; }
 a  { color: var(--series-in); font-weight: 600; }
 
 section { margin-bottom: 34px; }
 
-/* ===== 頁首 ===== */
+/* ===== 頁首:報紙刊頭,底部雙細線 rule ===== */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -109,56 +105,49 @@ section { margin-bottom: 34px; }
   flex-wrap: wrap;
   margin-bottom: 28px;
   position: relative;
+  border-bottom: 4px double var(--ink);
+  padding-bottom: 14px;
 }
 .subtitle { color: var(--text-secondary); margin: 0; font-size: 14px; }
 
-/* 頁首右上幾何裝飾:一顆圓 + 一個三角 */
-.header-deco { position: absolute; right: 0; top: -6px; pointer-events: none; }
-.header-deco .shape-dot {
-  display: inline-block; width: 16px; height: 16px; border-radius: 50%;
-  background: var(--mem-cyan); border: 2.5px solid var(--ink); margin-right: 8px;
-}
-.header-deco .shape-tri {
-  display: inline-block; width: 0; height: 0;
-  border-left: 10px solid transparent; border-right: 10px solid transparent;
-  border-bottom: 18px solid var(--mem-orange);
-}
+/* 頁首幾何裝飾:Memphis 遺物,報紙風不用(保留節點、僅隱藏) */
+.header-deco { display: none; }
+.header-deco .shape-dot,
+.header-deco .shape-tri { display: none; }
 
 .update-status { text-align: right; font-size: 12px; color: var(--text-muted); }
 .status-line { margin-top: 5px; display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .ts { font-variant-numeric: tabular-nums; }
 .status-dot {
-  width: 11px; height: 11px; border-radius: 50%;
-  background: var(--text-muted); border: 2px solid var(--ink);
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--text-muted); border: 1px solid var(--ink);
   display: inline-block;
 }
 .status-dot.ok  { background: var(--status-good); }
 .status-dot.err { background: var(--status-bad); }
 
-/* ===== Memphis 按鈕 ===== */
+/* ===== 按鈕(FT claret 實色) ===== */
 #refresh-btn {
-  background: var(--mem-yellow);
-  border: 2.5px solid var(--ink);
-  color: #17141a;
-  border-radius: 10px;
+  background: var(--mem-pink);
+  border: 1px solid var(--mem-pink);
+  color: #ffffff;
+  border-radius: 2px;
   padding: 7px 16px;
   font-size: 13px;
-  font-weight: 800;
+  font-weight: 700;
   cursor: pointer;
-  box-shadow: 3px 3px 0 var(--shadow);
-  transition: transform 0.08s, box-shadow 0.08s;
+  transition: background 0.12s;
 }
-#refresh-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--shadow); }
-#refresh-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow); }
-#refresh-btn:disabled { opacity: 0.5; cursor: wait; transform: none; box-shadow: 3px 3px 0 var(--shadow); }
+#refresh-btn:hover { background: #7d0c32; border-color: #7d0c32; }
+#refresh-btn:active { background: #660a29; }
+#refresh-btn:disabled { opacity: 0.5; cursor: wait; }
 
-/* ===== 卡片 ===== */
+/* ===== 卡片(平面、細墨框、方角) ===== */
 .card {
   background: var(--surface-1);
-  border: 3px solid var(--ink);
-  border-radius: 16px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
   padding: 22px;
-  box-shadow: 8px 8px 0 var(--shadow);
 }
 .card-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .card-desc { color: var(--text-secondary); font-size: 13px; margin: 10px 0 12px; }
@@ -171,8 +160,8 @@ section { margin-bottom: 34px; }
   display: inline-block;
   font-size: 12px; font-weight: 700;
   color: var(--text-secondary);
-  border: 2px dashed var(--text-muted);
-  border-radius: 8px;
+  border: 1px dashed var(--text-muted);
+  border-radius: 2px;
   padding: 2px 10px;
 }
 .card-desc .desc-body {
@@ -180,32 +169,32 @@ section { margin-bottom: 34px; }
   position: absolute; top: 100%; left: 0; z-index: 30;
   width: min(640px, 84vw);
   background: var(--surface-1);
-  border: 2.5px solid var(--ink);
-  border-radius: 10px;
-  box-shadow: 4px 4px 0 var(--shadow);
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(51, 48, 46, 0.18);
   padding: 10px 14px;
 }
 .card-desc:hover::before,
-.card-desc.open::before { background: var(--mem-yellow); color: #17141a; border-style: solid; border-color: #17141a; }
+.card-desc.open::before { background: var(--mem-yellow); color: var(--ink); border-style: solid; border-color: var(--ink); }
 .card-desc:hover .desc-body,
 .card-desc.open .desc-body { display: block; }
 
-/* 卡片標題 chip:每張卡不同 Memphis 色(--card-accent),永遠深字 */
+/* 卡片標題:報紙欄目標題——襯線粗體 + 各卡不同 FT 強調色粗底線 */
 .card h2.card-title {
   display: inline-block;
-  background: var(--card-accent, var(--mem-yellow));
-  color: #17141a;
-  border: 2.5px solid var(--ink);
-  border-radius: 9px;
-  box-shadow: 3px 3px 0 var(--shadow);
-  padding: 4px 14px;
-  transform: rotate(-0.8deg);
+  background: none;
+  color: var(--ink);
+  border: none;
+  border-bottom: 3px solid var(--card-accent, var(--mem-pink));
+  border-radius: 0;
+  padding: 0 2px 3px;
+  font-size: 19px;
 }
-#twd-card     { --card-accent: var(--mem-cyan); }
-#foreign-card { --card-accent: #b18cff; }   /* 霓虹淺紫(裝飾色,非資料色) */
-#china-card   { --card-accent: #ff8f6b; }   /* 霓虹珊瑚橘(裝飾色,非資料色) */
-#etfflow-card { --card-accent: var(--mem-yellow); }
-#bond-card    { --card-accent: var(--mem-pink); }
+#twd-card     { --card-accent: var(--mem-cyan); }    /* teal */
+#foreign-card { --card-accent: var(--mem-purple); }  /* oxford 藍 */
+#china-card   { --card-accent: var(--mem-pink); }    /* claret */
+#etfflow-card { --card-accent: var(--mem-orange); }  /* 赭橘 */
+#bond-card    { --card-accent: #6f46a8; }            /* velvet 紫(與美債線同族) */
 
 /* 資料重新載入:保留前次渲染、降透明度,不跳版 */
 .refreshing { opacity: 0.55; transition: opacity 0.2s; }
@@ -214,16 +203,15 @@ section { margin-bottom: 34px; }
 .card-controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .seg-toggle {
   display: flex;
-  border: 2.5px solid var(--ink);
-  border-radius: 10px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
   overflow: hidden;
   background: var(--surface-1);
-  box-shadow: 3px 3px 0 var(--shadow);
 }
 .seg-toggle button {
   background: transparent;
   border: none;
-  border-right: 2px solid var(--ink);
+  border-right: 1px solid var(--ink);
   color: var(--text-secondary);
   padding: 5px 13px;
   font-size: 12.5px;
@@ -231,7 +219,7 @@ section { margin-bottom: 34px; }
   cursor: pointer;
 }
 .seg-toggle button:last-child { border-right: none; }
-.seg-toggle button.active { background: var(--mem-yellow); color: #17141a; }
+.seg-toggle button.active { background: var(--ink); color: var(--page); }
 .seg-label { font-size: 12px; color: var(--text-muted); }
 
 .card-footnote { font-size: 12px; color: var(--text-muted); margin: 14px 0 0; }
@@ -254,10 +242,9 @@ section { margin-bottom: 34px; }
   align-content: start;
 }
 .bond-stat {
-  border: 2.5px solid var(--ink);
-  border-radius: 12px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
   padding: 10px 14px;
-  box-shadow: 4px 4px 0 var(--shadow);
   background: var(--surface-1);
 }
 .bond-stat .label { font-size: 12px; color: var(--text-secondary); font-weight: 700; }
@@ -267,8 +254,8 @@ section { margin-bottom: 34px; }
 .bond-stat .delta .down { color: var(--delta-down); font-weight: 700; }
 .bond-stat .delta .flat { color: var(--text-muted); }
 .bond-stat .delta .period { color: var(--text-muted); }
-.bond-stat.inverted { background: var(--mem-yellow); color: #17141a; }
-.bond-stat.inverted .label, .bond-stat.inverted .delta .period { color: #4c4653; }
+.bond-stat.inverted { background: var(--mem-yellow); color: var(--ink); }
+.bond-stat.inverted .label, .bond-stat.inverted .delta .period { color: #5f5854; }
 
 /* 迷你時間趨勢(VIX + 核心 PCE / 非農 / 失業率) */
 .macro-grid {
@@ -278,10 +265,9 @@ section { margin-bottom: 34px; }
   margin-top: 16px;
 }
 .macro-box {
-  border: 2.5px solid var(--ink);
-  border-radius: 12px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
   padding: 10px 14px 8px;
-  box-shadow: 4px 4px 0 var(--shadow);
   background: var(--surface-1);
 }
 .macro-head {
@@ -316,8 +302,8 @@ section { margin-bottom: 34px; }
   display: inline-block;
   width: 12px;
   height: 12px;
-  border: 2px solid var(--ink);
-  border-radius: 4px;
+  border: 1px solid var(--ink);
+  border-radius: 2px;
   flex: none;
 }
 .twd-box .label { display: inline-flex; align-items: center; gap: 6px; }
@@ -335,22 +321,23 @@ section { margin-bottom: 34px; }
 }
 
 /* 卡頭數字盒的「即時」小標(scanner 即時交叉價;無 scanner 資料時不顯示)
-   黃底固定配深墨字,深淺模式皆足夠對比 */
+   claret 底白字,報紙標記感 */
 .live-tag {
   font-size: 10px;
   font-weight: 800;
   line-height: 1;
   padding: 2px 6px;
-  border: 1.5px solid #17141a;
-  border-radius: 999px;
-  background: var(--mem-yellow);
-  color: #17141a;
+  border: 1px solid var(--mem-pink);
+  border-radius: 2px;
+  background: var(--mem-pink);
+  color: #ffffff;
   flex: none;
 }
 
 /* 中國資金流向卡:分時圖小標 + 兩張長條圖並排(窄幅堆疊) */
 .china-subtitle {
-  font-size: 13.5px;
+  font-family: var(--serif);
+  font-size: 14px;
   font-weight: 800;
   color: var(--text-primary);
   margin: 18px 0 0;
@@ -363,37 +350,35 @@ section { margin-bottom: 34px; }
 }
 @media (max-width: 760px) { .china-bars { grid-template-columns: 1fr; } }
 
-/* 結論子區塊:固定白底 + 黑粗體(深淺模式皆同,便籤感);多項結論逐行編號 */
+/* 結論子區塊:固定白底 + 黑粗體(便籤/引言框感);多項結論逐行編號
+   底色固定白,框用固定深色(不吃 --ink 以維持全站慣例的可攜性) */
 .bond-read {
   font-size: 13.5px;
   margin: 14px 0 0;
   background: #ffffff;
-  color: #17141a;
+  color: #33302e;
   font-weight: 700;
-  /* 底色固定白,框與陰影用固定深色(不吃 --ink:霓虹主題的 ink 是淺色,白底上會看不見) */
-  border: 2.5px solid #17141a;
-  border-radius: 12px;
-  box-shadow: 3px 3px 0 #17141a;
+  border: 1px solid #33302e;
+  border-radius: 2px;
   padding: 10px 14px 12px;
 }
 .bond-read:empty { display: none; }   /* 資料未到時不畫空白框 */
 .bond-read .bond-tag {
   display: inline-block;
   background: var(--mem-pink);
-  color: #17141a;
-  border: 2px solid #17141a;
-  border-radius: 8px;
+  color: #ffffff;
+  border: 1px solid var(--mem-pink);
+  border-radius: 2px;
   padding: 1px 10px;
   font-weight: 800;
   margin-right: 8px;
-  box-shadow: 2px 2px 0 #17141a;
 }
 .bond-read .read-item { display: block; margin-top: 6px; }
 .bond-read .read-note {
   display: block; margin-top: 8px;
-  font-size: 12px; font-weight: 400; color: #6f6a76;
+  font-size: 12px; font-weight: 400; color: #6f6a66;
 }
-/* 底色固定白,警示色不隨主題換值(深色模式的紅在白底上對比不足) */
+/* 底色固定白,警示色不吃主題變數 */
 .bond-read .warn { color: #c22525; font-weight: 800; }
 
 /* ===== tooltip(共用)===== */
@@ -401,9 +386,9 @@ section { margin-bottom: 34px; }
   position: fixed;
   z-index: 50;
   background: var(--surface-1);
-  border: 2.5px solid var(--ink);
-  border-radius: 10px;
-  box-shadow: 4px 4px 0 var(--shadow);
+  border: 1px solid var(--ink);
+  border-radius: 2px;
+  box-shadow: 0 2px 8px rgba(51, 48, 46, 0.18);
   padding: 8px 12px;
   font-size: 12.5px;
   pointer-events: none;
@@ -412,15 +397,10 @@ section { margin-bottom: 34px; }
 .tooltip .tt-value { font-weight: 800; font-size: 14px; }
 .tooltip .tt-label { color: var(--text-secondary); }
 
-/* ===== 頁尾 ===== */
+/* ===== 頁尾:報紙尾雙細線 rule ===== */
 .page-footer {
   font-size: 12px;
   color: var(--text-muted);
-  border-top: 3px solid var(--ink);
+  border-top: 4px double var(--ink);
   padding-top: 14px;
-  /* 頁尾上緣一排青色圓點 */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='8' viewBox='0 0 24 8'%3E%3Ccircle cx='4' cy='4' r='2.5' fill='%2300e5ff'/%3E%3C/svg%3E");
-  background-repeat: repeat-x;
-  background-position: left 6px;
-  padding-top: 22px;
 }
