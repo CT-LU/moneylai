@@ -119,11 +119,13 @@ const ETF_FLOW_LIST = [
   { sym: 'NASDAQ:EMB',  name: '新興市場債 EMB' },
 ];
 
+// perfCol=同一統計期間的價格報酬欄位(1Y 對應 Perf.Y,已驗證對 ETF 有值):
+// 流量與價格同期並列,才能看出「價漲沒錢背書/價跌有人承接」的價量背離
 const ETF_FLOW_PERIODS = [
-  { key: '1M',  col: 'fund_flows.1M',  label: '近 1 月' },
-  { key: '3M',  col: 'fund_flows.3M',  label: '近 3 月' },
-  { key: 'YTD', col: 'fund_flows.YTD', label: '今年以來' },
-  { key: '1Y',  col: 'fund_flows.1Y',  label: '近 1 年' },
+  { key: '1M',  col: 'fund_flows.1M',  perfCol: 'Perf.1M',  label: '近 1 月' },
+  { key: '3M',  col: 'fund_flows.3M',  perfCol: 'Perf.3M',  label: '近 3 月' },
+  { key: 'YTD', col: 'fund_flows.YTD', perfCol: 'Perf.YTD', label: '今年以來' },
+  { key: '1Y',  col: 'fund_flows.1Y',  perfCol: 'Perf.Y',   label: '近 1 年' },
 ];
 
 // 總經月資料(聯準會雙重使命:物價 + 就業)
@@ -518,16 +520,21 @@ async function fetchEtfFlows() {
     method: 'POST',   // 同樣不設 Content-Type,維持簡單請求
     body: JSON.stringify({
       symbols: { tickers: ETF_FLOW_LIST.map(e => e.sym), query: { types: [] } },
-      columns: ['close', 'aum', ...ETF_FLOW_PERIODS.map(p => p.col)],
+      columns: ['close', 'aum',
+        ...ETF_FLOW_PERIODS.map(p => p.col), ...ETF_FLOW_PERIODS.map(p => p.perfCol)],
     }),
   });
   if (!res.ok) throw new Error(`scanner ETF ${res.status}`);
   const rows = (await res.json()).data || [];
+  const nPer = ETF_FLOW_PERIODS.length;
   const out = {};
   for (const item of rows) {
-    const flows = {};
-    ETF_FLOW_PERIODS.forEach((p, i) => { flows[p.key] = item.d[2 + i]; });
-    out[item.s] = { close: item.d[0], aum: item.d[1], flows };
+    const flows = {}, perfs = {};
+    ETF_FLOW_PERIODS.forEach((p, i) => {
+      flows[p.key] = item.d[2 + i];
+      perfs[p.key] = item.d[2 + nPer + i];
+    });
+    out[item.s] = { close: item.d[0], aum: item.d[1], flows, perfs };
   }
   if (!Object.keys(out).length) throw new Error('scanner ETF 無資料');
   state.etfFlows = out;
@@ -2075,12 +2082,28 @@ function etfFlowRows() {
     const d = q[e.sym];
     const flow = d?.flows[ui.etfPeriod];
     if (!d || !Number.isFinite(d.aum) || d.aum <= 0 || !Number.isFinite(flow)) continue;
-    rows.push({ ...e, flow, aum: d.aum, pct: flow / d.aum * 100 });
+    const perf = d.perfs?.[ui.etfPeriod];
+    rows.push({
+      ...e, flow, aum: d.aum, pct: flow / d.aum * 100,
+      perf: Number.isFinite(perf) ? perf : null,   // 同期價格漲跌 %(缺值仍保留列)
+    });
   }
   return rows.sort((a, b) => b.pct - a.pct);
 }
 
 const etfPeriodLabel = () => ETF_FLOW_PERIODS.find(x => x.key === ui.etfPeriod).label;
+
+// 價量背離:價格與資金流方向相反,且兩者幅度都有意義才算
+// (價格門檻隨期間放大——期間愈長正常波動愈大;流量門檻沿用 ±0.5pp)
+// 回傳 1=價跌但淨申購(有人逢跌承接)、-1=價漲但淨贖回(漲勢沒新錢背書)、0=無背離
+const ETF_DIVERGE_PRICE_MIN = { '1M': 3, '3M': 5, 'YTD': 6, '1Y': 8 };
+function etfDiverge(r) {
+  if (!Number.isFinite(r.perf)) return 0;
+  if (Math.abs(r.perf) < ETF_DIVERGE_PRICE_MIN[ui.etfPeriod] || Math.abs(r.pct) < 0.5) return 0;
+  if (r.perf < 0 && r.pct > 0) return 1;
+  if (r.perf > 0 && r.pct < 0) return -1;
+  return 0;
+}
 
 // 進攻端/避險端合計:籃內各檔流量加總 ÷ 規模加總
 function etfBasket(rows, group) {
@@ -2125,24 +2148,30 @@ function renderEtfFlowStats(rows) {
 }
 
 // 橫向 diverging 長條:每檔一列,長度 = 流量佔自身規模 %(跨檔可比),
-// 藍=淨申購(流入)、紅=淨贖回(流出),與全站資料色一致;列依流量佔比排序
+// 藍=淨申購(流入)、紅=淨贖回(流出),與全站資料色一致;列依流量佔比排序。
+// 右側兩欄文字:流量佔規模 % 與「同期價格」漲跌 %(量綱不同,價格只以文字並列
+// 不入座標軸——雙軸是 dataviz 禁手);價量背離列於價格後標 ※ 並加粗
 function renderEtfFlowChart(rows) {
   const container = $('#etfflow-chart');
   const width = Math.max(320, container.clientWidth || 720);
   const rowH = 27;
-  const m = { top: 6, right: 10, bottom: 6, left: 10 };
+  const m = { top: 22, right: 10, bottom: 6, left: 10 };   // top 留給欄位小標題
   const labelW = Math.min(122, Math.max(98, Math.round(width * 0.17)));
   const valueW = 62;
+  const priceW = width < 420 ? 56 : 64;
   const height = m.top + m.bottom + rows.length * rowH;
 
   const ink = cssVar('--ink');
   const cGrid = cssVar('--grid');
   const cText = cssVar('--text-primary');
+  const cMuted = cssVar('--text-muted');
   const cIn = cssVar('--series-in');
   const cOut = cssVar('--series-out');
 
   const x0 = m.left + labelW;
-  const x1 = width - m.right - valueW;
+  const x1 = width - m.right - priceW - valueW;
+  const xFlowCol = width - m.right - priceW - valueW + 8;   // 流量佔規模 % 文字欄
+  const xPriceCol = width - m.right - priceW + 8;           // 同期價格 % 文字欄
   const maxAbs = Math.max(0.5, d3.max(rows, r => Math.abs(r.pct)));
   const x = d3.scaleLinear().domain([-maxAbs, maxAbs]).range([x0, x1]);
 
@@ -2157,10 +2186,19 @@ function renderEtfFlowChart(rows) {
       .attr('stroke', cGrid).attr('stroke-width', 1);
   }
 
+  // 欄位小標題(兩個數字欄並列,不標會分不清哪欄是流量哪欄是價格)
+  const colHead = (x, text) => svg.append('text')
+    .attr('x', x).attr('y', 13)
+    .attr('font-size', 10.5).attr('font-weight', 650).attr('fill', cMuted)
+    .text(text);
+  colHead(xFlowCol, '佔規模');
+  colHead(xPriceCol, '同期價格');
+
   const per = etfPeriodLabel();
   rows.forEach((r, i) => {
     const y = m.top + i * rowH;
     const pos = r.pct >= 0;
+    const dv = etfDiverge(r);
 
     svg.append('text')
       .attr('x', m.left + labelW - 10).attr('y', y + rowH / 2 + 4)
@@ -2178,10 +2216,18 @@ function renderEtfFlowChart(rows) {
       .attr('stroke', ink).attr('stroke-width', 1.2);
 
     svg.append('text')
-      .attr('x', width - m.right - valueW + 8).attr('y', y + rowH / 2 + 4)
+      .attr('x', xFlowCol).attr('y', y + rowH / 2 + 4)
       .attr('font-size', 12).attr('font-weight', 700)
       .attr('fill', cText).style('font-variant-numeric', 'tabular-nums')
       .text(fmtPct(r.pct, Math.abs(r.pct) >= 10 ? 1 : 2));
+
+    // 同期價格:文字並列(不用紅綠——避免與藍流入/紅流出打架,+/- 已表意);
+    // 背離列加粗 + ※,平常列退為 muted 不搶流量主角的戲
+    svg.append('text')
+      .attr('x', xPriceCol).attr('y', y + rowH / 2 + 4)
+      .attr('font-size', 11.5).attr('font-weight', dv ? 750 : 550)
+      .attr('fill', dv ? cText : cMuted).style('font-variant-numeric', 'tabular-nums')
+      .text(Number.isFinite(r.perf) ? `${fmtPct(r.perf, 1)}${dv ? '※' : ''}` : '—');
 
     // 整列透明熱區:滑到哪一列都有 tooltip
     svg.append('rect')
@@ -2189,12 +2235,18 @@ function renderEtfFlowChart(rows) {
       .attr('width', width - m.left - m.right).attr('height', rowH)
       .attr('fill', 'transparent')
       .on('mouseenter mousemove', (ev) => {
-        showTooltip([
+        const lines = [
           { text: `${r.name} · ${per}`, cls: 'tt-label' },
           { text: `${r.flow >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(Math.abs(r.flow)).replace('+', '')}`, cls: 'tt-value' },
           { text: `佔基金規模 ${fmtPct(r.pct)}`, cls: 'tt-value' },
+          { text: `同期價格 ${fmtPct(r.perf, 1)}`, cls: 'tt-value' },
           { text: `目前規模 ${fmtUsdBillions(r.aum).replace('+', '')}`, cls: 'tt-value' },
-        ], ev.clientX, ev.clientY);
+        ];
+        if (dv) lines.push({
+          text: dv > 0 ? '※ 價量背離:價跌但有真金白銀承接' : '※ 價量背離:價漲但沒有新錢背書',
+          cls: 'tt-label',
+        });
+        showTooltip(lines, ev.clientX, ev.clientY);
       })
       .on('mouseleave', hideTooltip);
   });
@@ -2218,9 +2270,12 @@ function renderEtfFlowLegend() {
     chip.appendChild(document.createTextNode(text));
     return chip;
   };
+  // ※ 是文字標記不是色塊,圖例用純文字 chip 說明
+  const mkText = (text) => el('span', 'twd-chip', text);
   box.replaceChildren(
     mk(cssVar('--series-in'), '淨申購=真金白銀流入'),
     mk(cssVar('--series-out'), '淨贖回=資金撤出'),
+    mkText('※=價量背離(價格與資金流反向)'),
   );
 }
 
@@ -2288,9 +2343,21 @@ function renderEtfFlowRead(rows) {
     : `能源股 XLE(${fmtPct(e.pct)})比油價 ETF USO(${fmtPct(u.pct)})吸金——資金要的是油公司的現金流與股息,不是賭油價方向`);
   if (contrasts.length) items.push(`對照組:${contrasts.join(';')}。`);
 
+  // 價量背離:價格與真金白銀唱反調的檔,是這張卡獨有的訊號(依流量佔比取最顯著三檔)
+  const diverged = rows.filter(r => etfDiverge(r) !== 0)
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 3);
+  if (diverged.length) {
+    const txt = diverged.map(r => etfDiverge(r) > 0
+      ? `${r.name} 價跌 ${fmtPct(r.perf, 1)} 但淨申購佔規模 ${fmtPct(r.pct)}——下跌有真金白銀承接`
+      : `${r.name} 價漲 ${fmtPct(r.perf, 1)} 但淨贖回佔規模 ${fmtPct(r.pct)}——漲勢沒有新錢背書`)
+      .join(';');
+    items.push(`價量背離(※):${txt}。`);
+  }
+
   setRead(p, 'ETF 申贖合讀', items,
     '資金流=該期間「申購−贖回」的真實金額(TradingView 統計,約 T+1 更新);' +
-    '佔規模 % 才能跨檔比較——現金停泊 SGOV 一天的量可能比稀土 REMX 整年還大。');
+    '佔規模 % 才能跨檔比較——現金停泊 SGOV 一天的量可能比稀土 REMX 整年還大;' +
+    '「同期價格」=同一統計期間的價格漲跌,與資金流反向且幅度夠大才標 ※。');
 }
 
 function renderEtfFlowCard() {
