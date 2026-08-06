@@ -7,7 +7,7 @@
 <title>錢錢流向儀表板</title>
 <!-- ?v= 為快取破壞參數:style.css / app.js 有改動時要一起遞增,
      否則 GitHub Pages 的 10 分鐘快取會讓使用者拿到新舊混雜的檔案 -->
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
 <div class="viz-root">
@@ -138,8 +138,14 @@
     <div class="macro-grid" id="etfflow-stats"></div>
     <div id="etfflow-chart" class="twd-chart"></div>
     <div class="twd-legend" id="etfflow-legend"></div>
+    <h3 class="china-subtitle">日頻申贖趨勢(每日快照累積)</h3>
+    <div class="card-controls etf-daily-controls">
+      <span class="seg-label">觀察標的</span>
+      <select id="etfflow-daily-sel" class="etf-select"></select>
+    </div>
+    <div id="etfflow-daily-chart" class="twd-chart"></div>
     <p class="bond-read" id="etfflow-read"></p>
-    <p class="card-footnote">資料來源:TradingView 的 ETF 申贖統計(約每個交易日更新一次,較收盤延後約一天),每小時輪詢;統計期間可切換近 1 月/3 月/今年以來/1 年(無週/日頻率的現成資料)。全部為美國掛牌 ETF,反映的是美元資金的配置動向。<span id="etfflow-status"></span></p>
+    <p class="card-footnote">資料來源:TradingView 的 ETF 申贖統計(約每個交易日更新一次,較收盤延後約一天),每小時輪詢;統計期間可切換近 1 月/3 月/今年以來/1 年(無週/日頻率的現成資料)。日頻申贖趨勢為本站每日快照的估算值(流通股數變化 × 淨值,自 2026-07-31 起累積,愈久愈完整);快照間隔跨週末或假日時,該段變化會併入下一根長條。全部為美國掛牌 ETF,反映的是美元資金的配置動向。<span id="etfflow-status"></span></p>
   </section>
 
   <footer class="page-footer">
@@ -159,6 +165,6 @@
 <div id="tooltip" class="tooltip" hidden></div>
 
 <script src="d3.v7.min.js"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>

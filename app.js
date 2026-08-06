@@ -173,6 +173,7 @@ const state = {
   twdfx: null,      // [{ date, usd, jpy, eur, cny }] 升冪,值 = 1 單位外幣兌台幣
   foreign: null,    // [{ date, net }] 台股外資買賣超(億元,升冪,僅交易日)
   snapHist: null,   // { sym: { date: close } } repo 內每日快照(GitHub Actions 產出)
+  etfSnap: null,    // { sym: { date: { so, nav, aum } } } ETF 每日快照(同一支 Actions 產出)
   china: {          // 中國資金流向(東方財富):
     margin: null,   //   [{ date, net, balance }] 兩融融資淨買入/餘額(億元,升冪)
     south: null,    //   [{ date, net }] 港股通南向淨買入(億港元,升冪)
@@ -186,6 +187,7 @@ const ui = {
   twdWeeks: 1,
   etfPeriod: '1M',
   etfSort: 'flow',   // flow=依流量佔規模 %、perf=依同期價格漲跌 %
+  etfDailySel: 'basket:attack',   // 日頻申贖趨勢的觀察標的(籃合計或單檔)
 };
 
 // ===== 小工具 =====
@@ -645,13 +647,21 @@ async function fetchSnapHist() {
   state.snapHist = await res.json();
 }
 
+// ETF 每日快照(repo 的 data/etf.json,同一支 GitHub Actions 記錄流通股數/淨值/規模):
+// 日頻資金流 ≈ Δ流通股數 × 當日 NAV,scanner 沒有週/日頻申贖欄位,只能這樣自己算
+async function fetchEtfSnap() {
+  const res = await fetch(`data/etf.json?d=${isoDate(new Date())}`);   // 相對路徑;以日期破快取
+  if (!res.ok) throw new Error(`ETF 快照 ${res.status}`);
+  state.etfSnap = await res.json();
+}
+
 async function refreshSnapshot() {
-  try {
-    await fetchSnapHist();
-    renderAll();
-  } catch (e) {
-    console.warn('每日快照載入失敗(不影響其他資料):', e);
+  // 兩份快照獨立抓:單一檔案缺失(如首次部署 404)不拖累另一份
+  const results = await Promise.allSettled([fetchSnapHist(), fetchEtfSnap()]);
+  for (const r of results) {
+    if (r.status === 'rejected') console.warn('每日快照載入失敗(不影響其他資料):', r.reason);
   }
+  renderAll();
 }
 
 // 把某 scanner 標的的「每日快照 + 本機累積」合併成升冪日序列
@@ -1645,7 +1655,7 @@ function renderNetBarChart(containerSel, rows, opts) {
       .on('mouseleave', hideTooltip);
   }
 
-  // 只直接標最新一根(選擇性標示,不在每根上放數字)
+  // 只直接標最新一根(選擇性標示,不在每根上放數字);標籤格式可由 opts 覆寫
   const last = rows[rows.length - 1];
   const ly = last.net >= 0
     ? Math.max(m.top - 6, y(last.net) - 5)
@@ -1654,7 +1664,7 @@ function renderNetBarChart(containerSel, rows, opts) {
     .attr('x', x(last.date) + x.bandwidth() / 2).attr('y', ly)
     .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('font-weight', 700)
     .attr('fill', cText)
-    .text(fmtNetBillions(last.net).replace(' 億', ''));
+    .text(opts.lastLabel ? opts.lastLabel(last) : fmtNetBillions(last.net).replace(' 億', ''));
 
   container.replaceChildren(svg.node());
 }
@@ -2388,7 +2398,88 @@ function renderEtfFlowRead(rows) {
     '「同期價格」=同一統計期間的價格漲跌,與資金流反向且幅度夠大才標 ※。');
 }
 
+// ===== 日頻申贖趨勢(repo 的 data/etf.json 每日快照) =====
+// scanner 沒有週/日頻申贖欄位(已驗證只有 1M/3M/YTD/1Y/5Y),
+// 日頻流量 ≈ Δ流通股數 × 當日 NAV,由每日快照相鄰兩點自行估算;
+// 快照間隔跨週末/假日時,該段變化會併入下一根長條
+
+// 觀察標的下拉的兩個籃合計選項(其餘選項為 ETF_FLOW_LIST 單檔)
+const ETF_DAILY_BASKETS = [
+  { key: 'basket:attack', name: '進攻端合計(半導體+AI+比特幣)', group: 'attack' },
+  { key: 'basket:safe',   name: '避險端合計(黃金+美長債+現金)', group: 'safe' },
+];
+
+// 單檔的日頻流量序列:相鄰快照的 Δ流通股數 × 當日 NAV
+function etfDailyPoints(sym) {
+  const h = state.etfSnap?.[sym];
+  if (!h) return [];
+  const dates = Object.keys(h).sort();
+  const pts = [];
+  for (let i = 1; i < dates.length; i++) {
+    const prev = h[dates[i - 1]], cur = h[dates[i]];
+    if (!Number.isFinite(prev?.so) || !Number.isFinite(cur?.so)
+      || !Number.isFinite(cur?.nav) || !Number.isFinite(cur?.aum) || cur.aum <= 0) continue;
+    pts.push({ date: dates[i], usd: (cur.so - prev.so) * cur.nav, aum: cur.aum });
+  }
+  return pts;
+}
+
+// 依觀察標的產出長條圖資料列:net = 佔規模 %(跨時可比)、usd = 絕對金額;
+// 籃合計 = 籃內各檔流量加總 ÷ 當日有值各檔的規模加總(啟用初期部分檔快照較晚起算)
+function etfDailyRows() {
+  const basket = ETF_DAILY_BASKETS.find(b => b.key === ui.etfDailySel);
+  const syms = basket
+    ? ETF_FLOW_LIST.filter(e => e.group === basket.group).map(e => e.sym)
+    : [ui.etfDailySel];
+  const byDate = new Map();
+  for (const sym of syms) {
+    for (const p of etfDailyPoints(sym)) {
+      const acc = byDate.get(p.date) ?? { usd: 0, aum: 0 };
+      acc.usd += p.usd;
+      acc.aum += p.aum;
+      byDate.set(p.date, acc);
+    }
+  }
+  return [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([date, v]) => ({ date, net: v.usd / v.aum * 100, usd: v.usd }));
+}
+
+function renderEtfDailyChart() {
+  const container = $('#etfflow-daily-chart');
+  const rows = etfDailyRows();
+  if (!rows.length) {
+    container.replaceChildren(el('p', 'etf-daily-empty',
+      '日頻快照累積中:需至少兩個交易日的快照才能算出第一根長條(自 2026-07-31 起每交易日累積)。'));
+    return;
+  }
+  renderNetBarChart('#etfflow-daily-chart', rows, {
+    unitLabel: '佔規模 %',
+    minAbs: 0.2,   // 日頻佔比多在 ±1% 內,不能沿用億元長條的預設下限
+    height: 170,
+    tooltipText: (r) => `${r.net >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(r.usd)},佔規模 ${fmtPct(r.net)}`,
+    lastLabel: (r) => fmtPct(r.net),
+  });
+}
+
+// 觀察標的下拉:兩籃合計 + 各檔;清單固定,啟動時生成一次
+function initEtfDailySel() {
+  const sel = $('#etfflow-daily-sel');
+  const mk = (value, text) => {
+    const o = el('option', null, text);
+    o.value = value;
+    return o;
+  };
+  sel.append(...ETF_DAILY_BASKETS.map(b => mk(b.key, b.name)),
+    ...ETF_FLOW_LIST.map(e => mk(e.sym, e.name)));
+  sel.value = ui.etfDailySel;
+  sel.addEventListener('change', () => {
+    ui.etfDailySel = sel.value;
+    renderEtfDailyChart();
+  });
+}
+
 function renderEtfFlowCard() {
+  renderEtfDailyChart();   // 日頻趨勢吃 data/etf.json 快照,不依賴 scanner 的申贖資料
   const rows = etfFlowRows();
   if (!rows.length) return;   // 資料未到:保留前一次渲染
   renderEtfFlowStats(rows);
@@ -2561,6 +2652,7 @@ function main() {
   initPeriodToggle('#etfflow-period', 'etfPeriod', renderEtfFlowCard);
   // 排序切換沿用同一套 seg-toggle 機制(按鈕一樣掛 data-period 屬性)
   initPeriodToggle('#etfflow-sort', 'etfSort', renderEtfFlowCard);
+  initEtfDailySel();
 
   // 卡片說明折疊:滑鼠 hover 走純 CSS,點擊切換 .open 供觸控裝置開合
   for (const p of document.querySelectorAll('.card-desc')) {
