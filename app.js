@@ -187,7 +187,6 @@ const ui = {
   twdWeeks: 1,
   etfPeriod: '1M',
   etfSort: 'flow',   // flow=依流量佔規模 %、perf=依同期價格漲跌 %
-  etfDailySel: 'basket:attack',   // 日頻申贖趨勢的觀察標的(籃合計或單檔)
 };
 
 // ===== 小工具 =====
@@ -2261,26 +2260,15 @@ function renderEtfFlowChart(rows) {
       .attr('fill', dv ? cText : cMuted).style('font-variant-numeric', 'tabular-nums')
       .text(Number.isFinite(r.perf) ? `${fmtPct(r.perf, 1)}${dv ? '※' : ''}` : '—');
 
-    // 整列透明熱區:滑到哪一列都有 tooltip
+    // 整列透明熱區:滑到哪一列就浮出該檔的文字摘要+日頻價量小圖,移開即消失
+    //(2026-08 使用者指定;mouseenter 重建、mousemove 只重新定位)
     svg.append('rect')
       .attr('x', m.left).attr('y', y)
       .attr('width', width - m.left - m.right).attr('height', rowH)
       .attr('fill', 'transparent')
-      .on('mouseenter mousemove', (ev) => {
-        const lines = [
-          { text: `${r.name} · ${per}`, cls: 'tt-label' },
-          { text: `${r.flow >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(Math.abs(r.flow)).replace('+', '')}`, cls: 'tt-value' },
-          { text: `佔基金規模 ${fmtPct(r.pct)}`, cls: 'tt-value' },
-          { text: `同期價格 ${fmtPct(r.perf, 1)}`, cls: 'tt-value' },
-          { text: `目前規模 ${fmtUsdBillions(r.aum).replace('+', '')}`, cls: 'tt-value' },
-        ];
-        if (dv) lines.push({
-          text: dv > 0 ? '※ 價量背離:價跌但有真金白銀承接' : '※ 價量背離:價漲但沒有新錢背書',
-          cls: 'tt-label',
-        });
-        showTooltip(lines, ev.clientX, ev.clientY);
-      })
-      .on('mouseleave', hideTooltip);
+      .on('mouseenter', (ev) => showEtfFlowPop(r, dv, per, ev))
+      .on('mousemove', positionEtfFlowPop)
+      .on('mouseleave', hideEtfFlowPop);
   });
 
   // 零線(基準線,比網格線重)
@@ -2398,16 +2386,12 @@ function renderEtfFlowRead(rows) {
     '「同期價格」=同一統計期間的價格漲跌,與資金流反向且幅度夠大才標 ※。');
 }
 
-// ===== 日頻申贖趨勢(repo 的 data/etf.json 每日快照) =====
+// ===== 日頻價量浮層(repo 的 data/etf.json 每日快照) =====
 // scanner 沒有週/日頻申贖欄位(已驗證只有 1M/3M/YTD/1Y/5Y),
 // 日頻流量 ≈ Δ流通股數 × 當日 NAV,由每日快照相鄰兩點自行估算;
-// 快照間隔跨週末/假日時,該段變化會併入下一根長條
-
-// 觀察標的下拉的兩個籃合計選項(其餘選項為 ETF_FLOW_LIST 單檔)
-const ETF_DAILY_BASKETS = [
-  { key: 'basket:attack', name: '進攻端合計(半導體+AI+比特幣)', group: 'attack' },
-  { key: 'basket:safe',   name: '避險端合計(黃金+美長債+現金)', group: 'safe' },
-];
+// 快照間隔跨週末/假日時,該段變化會併入下一根長條。
+// 呈現方式(2026-08 使用者指定):不佔卡面版位,滑到主圖某一列時
+// 浮出該檔的價量雙面板小圖(上=淨值折線、下=申贖長條),移開即消失
 
 // 單檔的日頻流量序列:相鄰快照的 Δ流通股數 × 當日 NAV
 function etfDailyPoints(sym) {
@@ -2419,86 +2403,32 @@ function etfDailyPoints(sym) {
     const prev = h[dates[i - 1]], cur = h[dates[i]];
     if (!Number.isFinite(prev?.so) || !Number.isFinite(cur?.so)
       || !Number.isFinite(cur?.nav) || !Number.isFinite(cur?.aum) || cur.aum <= 0) continue;
-    pts.push({ date: dates[i], usd: (cur.so - prev.so) * cur.nav, aum: cur.aum });
+    pts.push({ date: dates[i], net: (cur.so - prev.so) * cur.nav / cur.aum * 100,
+      usd: (cur.so - prev.so) * cur.nav });
   }
   return pts;
 }
 
-// 依觀察標的產出長條圖資料列:net = 佔規模 %(跨時可比)、usd = 絕對金額;
-// 籃合計 = 籃內各檔流量加總 ÷ 當日有值各檔的規模加總(啟用初期部分檔快照較晚起算)
-function etfDailyRows() {
-  const basket = ETF_DAILY_BASKETS.find(b => b.key === ui.etfDailySel);
-  const syms = basket
-    ? ETF_FLOW_LIST.filter(e => e.group === basket.group).map(e => e.sym)
-    : [ui.etfDailySel];
-  const byDate = new Map();
-  for (const sym of syms) {
-    for (const p of etfDailyPoints(sym)) {
-      const acc = byDate.get(p.date) ?? { usd: 0, aum: 0 };
-      acc.usd += p.usd;
-      acc.aum += p.aum;
-      byDate.set(p.date, acc);
-    }
-  }
-  return [...byDate.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))
-    .map(([date, v]) => ({ date, net: v.usd / v.aum * 100, usd: v.usd }));
-}
-
-// 價格折線的序列:單檔=每日淨值(NAV,美元),籃合計=AUM 加權的連鎖報酬指數(期初=100
-// ——籃內各檔價位量級不同,直接平均淨值無意義);日期含第一個快照日,折線比長條多一點
-function etfDailySeries() {
-  const basket = ETF_DAILY_BASKETS.find(b => b.key === ui.etfDailySel);
-  const syms = basket
-    ? ETF_FLOW_LIST.filter(e => e.group === basket.group).map(e => e.sym)
-    : [ui.etfDailySel];
-  const dateSet = new Set();
-  for (const s of syms) {
-    for (const d of Object.keys(state.etfSnap?.[s] ?? {})) dateSet.add(d);
-  }
-  const dates = [...dateSet].sort();
-  let prices;
-  if (!basket) {
-    const h = state.etfSnap?.[syms[0]] ?? {};
-    prices = dates.map(d => ({ date: d, v: h[d]?.nav })).filter(p => Number.isFinite(p.v));
-  } else {
-    prices = [];
-    let idx = 100;
-    for (let i = 0; i < dates.length; i++) {
-      if (i > 0) {
-        // 當日報酬 = Σ(前日 AUM 權重 × 淨值日報酬),只計前後兩日皆有淨值的檔
-        let num = 0, den = 0;
-        for (const s of syms) {
-          const a = state.etfSnap[s]?.[dates[i - 1]], b = state.etfSnap[s]?.[dates[i]];
-          if (Number.isFinite(a?.nav) && Number.isFinite(b?.nav) && Number.isFinite(a?.aum)) {
-            num += a.aum * (b.nav / a.nav);
-            den += a.aum;
-          }
-        }
-        if (den > 0) idx *= num / den;
-      }
-      prices.push({ date: dates[i], v: idx });
-    }
-  }
-  return { isBasket: !!basket, dates, prices, flows: etfDailyRows() };
-}
-
-// 價量並列的雙面板圖(與中國卡 510300 分時圖同構:上=價格線、下=量能柱):
-// 共用一個 band x 軸,量綱不同的價與量各自一個面板、不共用 y 軸(雙軸是 dataviz 禁手);
-// 逐日的價量背離(價漲柱紅/價跌柱藍)在這裡直接看得到
-function renderEtfDailyChart() {
-  const container = $('#etfflow-daily-chart');
-  const { isBasket, dates, prices, flows } = etfDailySeries();
-  if (!flows.length) {
-    container.replaceChildren(el('p', 'etf-daily-empty',
-      '日頻快照累積中:需至少兩個交易日的快照才能算出第一根長條(自 2026-07-31 起每交易日累積)。'));
+// 浮層內的價量雙面板小圖(與 510300 分時圖同構:上=淨值折線、下=申贖佔規模 % 長條):
+// 共用一個 band x 軸(日期=快照日,折線含首個快照日、比長條多一點),
+// 量綱不同的價與量各自一個面板不共用 y 軸(雙軸是 dataviz 禁手);
+// 本身就是 hover 浮層,內部不再掛 tooltip
+function renderEtfDailyPanel(container, sym) {
+  const h = state.etfSnap?.[sym];
+  const prices = h ? Object.keys(h).sort()
+    .map(d => ({ date: d, v: h[d]?.nav })).filter(p => Number.isFinite(p.v)) : [];
+  const flows = etfDailyPoints(sym);
+  if (!flows.length || prices.length < 2) {
+    container.appendChild(el('p', 'etf-daily-empty',
+      '日頻快照累積中:需至少兩個交易日的快照才能畫出價量趨勢(自 2026-07-31 起每交易日累積)。'));
     return;
   }
 
-  const width = Math.max(320, container.clientWidth || 640);
-  const m = { top: 16, right: 12, bottom: 22, left: 56 };
-  const priceH = 86;    // 上面板(價格折線)高度
-  const gap = 18;       // 兩面板間距
-  const barH = 108;     // 下面板(申贖長條)高度
+  const width = 400;
+  const m = { top: 14, right: 10, bottom: 18, left: 48 };
+  const priceH = 62;    // 上面板(淨值折線)高度
+  const gap = 16;       // 兩面板間距
+  const barH = 72;      // 下面板(申贖長條)高度
   const height = m.top + priceH + gap + barH + m.bottom;
   const barTop = m.top + priceH + gap;
 
@@ -2511,6 +2441,7 @@ function renderEtfDailyChart() {
   const surface = cssVar('--surface-1');
   const accent = cssVar('--chart-accent');
 
+  const dates = prices.map(p => p.date);   // 流量日必有 NAV,長條日期是折線日期的子集
   const x = d3.scaleBand()
     .domain(dates)
     .range([m.left, width - m.right])
@@ -2519,7 +2450,7 @@ function renderEtfDailyChart() {
 
   const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
 
-  // ---- 上面板:價格折線 ----
+  // ---- 上面板:淨值折線 ----
   const pv = prices.map(p => p.v);
   const span = d3.max(pv) - d3.min(pv) || Math.abs(pv[0]) * 0.01 || 1;
   const yP = d3.scaleLinear()
@@ -2528,21 +2459,21 @@ function renderEtfDailyChart() {
   const fmtPrice = (v) => v.toLocaleString('zh-TW', {
     minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
-  for (const t of yP.ticks(3)) {
+  for (const t of yP.ticks(2)) {
     svg.append('line')
       .attr('x1', m.left).attr('x2', width - m.right)
       .attr('y1', yP(t)).attr('y2', yP(t))
       .attr('stroke', cGrid).attr('stroke-width', 1);
     svg.append('text')
-      .attr('x', m.left - 6).attr('y', yP(t) + 3.5)
-      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .attr('x', m.left - 5).attr('y', yP(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 9.5).attr('fill', cMuted)
       .text(fmtPrice(t));
   }
   // 面板標題靠格線左緣起始(右對齊會往左溢出邊界被裁)
   svg.append('text')
-    .attr('x', m.left).attr('y', m.top - 5)
+    .attr('x', m.left).attr('y', m.top - 4)
     .attr('font-size', 9.5).attr('fill', cMuted)
-    .text(isBasket ? '淨值指數(期初=100)' : '淨值(美元)');
+    .text('每日淨值(美元)');
 
   const line = d3.line().x(p => cx(p.date)).y(p => yP(p.v));
   svg.append('path')
@@ -2556,16 +2487,15 @@ function renderEtfDailyChart() {
     const last = i === prices.length - 1;
     svg.append('circle')
       .attr('cx', cx(p.date)).attr('cy', yP(p.v))
-      .attr('r', last ? 4 : 2.4)
+      .attr('r', last ? 3.5 : 2.2)
       .attr('fill', last ? accent : ink)
       .attr('stroke', last ? ink : surface)
-      .attr('stroke-width', last ? 1.6 : 1.2);
+      .attr('stroke-width', last ? 1.4 : 1.1);
   });
-  // 只直接標最新一點的價格
   const lastP = prices[prices.length - 1];
   svg.append('text')
-    .attr('x', cx(lastP.date)).attr('y', yP(lastP.v) - 9)
-    .attr('text-anchor', 'end').attr('font-size', 10.5).attr('font-weight', 700)
+    .attr('x', cx(lastP.date)).attr('y', yP(lastP.v) - 8)
+    .attr('text-anchor', 'end').attr('font-size', 10).attr('font-weight', 700)
     .attr('fill', cText)
     .text(fmtPrice(lastP.v));
 
@@ -2574,21 +2504,21 @@ function renderEtfDailyChart() {
   const yF = d3.scaleLinear()
     .domain([-maxAbs * 1.15, maxAbs * 1.15])
     .range([barTop + barH, barTop]);
-  for (const t of yF.ticks(4)) {
+  for (const t of yF.ticks(3)) {
     if (t === 0) continue;
     svg.append('line')
       .attr('x1', m.left).attr('x2', width - m.right)
       .attr('y1', yF(t)).attr('y2', yF(t))
       .attr('stroke', cGrid).attr('stroke-width', 1);
     svg.append('text')
-      .attr('x', m.left - 6).attr('y', yF(t) + 3.5)
-      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .attr('x', m.left - 5).attr('y', yF(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 9.5).attr('fill', cMuted)
       .text(t.toLocaleString('zh-TW'));
   }
   svg.append('text')
-    .attr('x', m.left).attr('y', barTop - 5)
+    .attr('x', m.left).attr('y', barTop - 4)
     .attr('font-size', 9.5).attr('fill', cMuted)
-    .text('申贖佔規模 %');
+    .text('申贖佔規模 %(藍=申購、紅=贖回)');
   svg.append('line')
     .attr('x1', m.left).attr('x2', width - m.right)
     .attr('y1', yF(0)).attr('y2', yF(0))
@@ -2601,82 +2531,87 @@ function renderEtfDailyChart() {
       .attr('y', pos ? yF(r.net) : yF(0))
       .attr('width', x.bandwidth())
       .attr('height', Math.max(1.5, Math.abs(yF(r.net) - yF(0))))
-      .attr('rx', 2.5)
+      .attr('rx', 2)
       .attr('fill', pos ? cIn : cOut)
-      .attr('stroke', ink).attr('stroke-width', 1.2);
+      .attr('stroke', ink).attr('stroke-width', 1);
   }
-  // 只直接標最新一根的佔比
   const lastF = flows[flows.length - 1];
   const ly = lastF.net >= 0
-    ? Math.max(barTop - 5, yF(lastF.net) - 5)
-    : Math.min(barTop + barH - 3, yF(lastF.net) + 12);
+    ? Math.max(barTop - 4, yF(lastF.net) - 4)
+    : Math.min(barTop + barH - 3, yF(lastF.net) + 11);
   svg.append('text')
     .attr('x', cx(lastF.date)).attr('y', ly)
-    .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('font-weight', 700)
+    .attr('text-anchor', 'middle').attr('font-size', 10).attr('font-weight', 700)
     .attr('fill', cText)
     .text(fmtPct(lastF.net));
 
-  // 日期標籤:約五個,最後一天永遠標
-  const every = Math.max(1, Math.ceil(dates.length / 5));
+  // 日期標籤:約四個,最後一天永遠標
+  const every = Math.max(1, Math.ceil(dates.length / 4));
   dates.forEach((d, i) => {
     const isLast = i === dates.length - 1;
     if (!isLast && (i % every !== 0 || dates.length - 1 - i < every / 2)) return;
     svg.append('text')
-      .attr('x', cx(d)).attr('y', height - 6)
-      .attr('text-anchor', 'middle').attr('font-size', 10).attr('fill', cMuted)
+      .attr('x', cx(d)).attr('y', height - 5)
+      .attr('text-anchor', 'middle').attr('font-size', 9.5).attr('fill', cMuted)
       .text(d.slice(5));
   });
 
-  // 整欄透明熱區:一次 hover 同時看價與量(價量是否同步,tooltip 內直接對照)
-  const priceByDate = new Map(prices.map((p, i) => [p.date, { ...p, i }]));
-  const flowByDate = new Map(flows.map(r => [r.date, r]));
-  for (const d of dates) {
-    svg.append('rect')
-      .attr('x', x(d)).attr('y', m.top)
-      .attr('width', x.bandwidth()).attr('height', height - m.top - m.bottom)
-      .attr('fill', 'transparent')
-      .on('mouseenter mousemove', (ev) => {
-        const lines = [{ text: d, cls: 'tt-label' }];
-        const p = priceByDate.get(d);
-        if (p) {
-          const prev = p.i > 0 ? prices[p.i - 1].v : null;
-          const chg = prev ? ` (${fmtPct((p.v / prev - 1) * 100)})` : '';
-          lines.push({ text: `${isBasket ? '淨值指數' : '淨值'} ${fmtPrice(p.v)}${chg}`, cls: 'tt-value' });
-        }
-        const f = flowByDate.get(d);
-        lines.push({
-          text: f
-            ? `${f.net >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(f.usd)},佔規模 ${fmtPct(f.net)}`
-            : '申贖:—(首個快照日無前一點可比)',
-          cls: 'tt-value',
-        });
-        showTooltip(lines, ev.clientX, ev.clientY);
-      })
-      .on('mouseleave', hideTooltip);
-  }
-
-  container.replaceChildren(svg.node());
+  container.appendChild(svg.node());
 }
 
-// 觀察標的下拉:兩籃合計 + 各檔;清單固定,啟動時生成一次
-function initEtfDailySel() {
-  const sel = $('#etfflow-daily-sel');
-  const mk = (value, text) => {
-    const o = el('option', null, text);
-    o.value = value;
-    return o;
-  };
-  sel.append(...ETF_DAILY_BASKETS.map(b => mk(b.key, b.name)),
-    ...ETF_FLOW_LIST.map(e => mk(e.sym, e.name)));
-  sel.value = ui.etfDailySel;
-  sel.addEventListener('change', () => {
-    ui.etfDailySel = sel.value;
-    renderEtfDailyChart();
-  });
+// ===== 主圖列 hover 浮層:文字摘要 + 價量雙面板小圖 =====
+// pointer-events: none 的 fixed 浮層,不搶滑鼠不閃爍;整層在 mouseenter 重建
+//(重建成本低,也順便吃到最新主題變數),mousemove 只重新定位
+let etfFlowPop = null;
+
+function ensureEtfFlowPop() {
+  if (!etfFlowPop) {
+    etfFlowPop = el('div', 'etf-flow-pop');
+    etfFlowPop.hidden = true;
+    document.body.appendChild(etfFlowPop);
+  }
+  return etfFlowPop;
+}
+
+function positionEtfFlowPop(ev) {
+  const pop = ensureEtfFlowPop();
+  if (pop.hidden) return;
+  const rect = pop.getBoundingClientRect();
+  const px = Math.max(8, Math.min(ev.clientX + 16, window.innerWidth - rect.width - 8));
+  // 預設放游標上方;上方放不下(浮層比 tooltip 高)改放下方
+  let py = ev.clientY - rect.height - 14;
+  if (py < 8) py = Math.min(ev.clientY + 18, window.innerHeight - rect.height - 8);
+  pop.style.left = `${px}px`;
+  pop.style.top = `${Math.max(8, py)}px`;
+}
+
+function showEtfFlowPop(r, dv, per, ev) {
+  hideTooltip();   // 與共用 tooltip 互斥,避免兩層浮窗疊在一起
+  const pop = ensureEtfFlowPop();
+  pop.replaceChildren(
+    el('div', 'tt-label', `${r.name} · ${per}`),
+    el('div', 'tt-value',
+      `${r.flow >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(Math.abs(r.flow)).replace('+', '')},佔規模 ${fmtPct(r.pct)}`),
+    el('div', 'tt-value',
+      `同期價格 ${Number.isFinite(r.perf) ? fmtPct(r.perf, 1) : '—'},目前規模 ${fmtUsdBillions(r.aum).replace('+', '')}`),
+  );
+  if (dv) {
+    pop.appendChild(el('div', 'tt-label',
+      dv > 0 ? '※ 價量背離:價跌但有真金白銀承接' : '※ 價量背離:價漲但沒有新錢背書'));
+  }
+  pop.appendChild(el('div', 'etf-pop-sub', '日頻價量趨勢(每日快照估算,約 T+1)'));
+  const chartBox = el('div', 'etf-pop-chart');
+  pop.appendChild(chartBox);
+  renderEtfDailyPanel(chartBox, r.sym);
+  pop.hidden = false;
+  positionEtfFlowPop(ev);
+}
+
+function hideEtfFlowPop() {
+  if (etfFlowPop) etfFlowPop.hidden = true;
 }
 
 function renderEtfFlowCard() {
-  renderEtfDailyChart();   // 日頻趨勢吃 data/etf.json 快照,不依賴 scanner 的申贖資料
   const rows = etfFlowRows();
   if (!rows.length) return;   // 資料未到:保留前一次渲染
   renderEtfFlowStats(rows);
@@ -2849,7 +2784,6 @@ function main() {
   initPeriodToggle('#etfflow-period', 'etfPeriod', renderEtfFlowCard);
   // 排序切換沿用同一套 seg-toggle 機制(按鈕一樣掛 data-period 屬性)
   initPeriodToggle('#etfflow-sort', 'etfSort', renderEtfFlowCard);
-  initEtfDailySel();
 
   // 卡片說明折疊:滑鼠 hover 走純 CSS,點擊切換 .open 供觸控裝置開合
   for (const p of document.querySelectorAll('.card-desc')) {
