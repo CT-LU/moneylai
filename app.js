@@ -1655,7 +1655,7 @@ function renderNetBarChart(containerSel, rows, opts) {
       .on('mouseleave', hideTooltip);
   }
 
-  // 只直接標最新一根(選擇性標示,不在每根上放數字);標籤格式可由 opts 覆寫
+  // 只直接標最新一根(選擇性標示,不在每根上放數字)
   const last = rows[rows.length - 1];
   const ly = last.net >= 0
     ? Math.max(m.top - 6, y(last.net) - 5)
@@ -1664,7 +1664,7 @@ function renderNetBarChart(containerSel, rows, opts) {
     .attr('x', x(last.date) + x.bandwidth() / 2).attr('y', ly)
     .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('font-weight', 700)
     .attr('fill', cText)
-    .text(opts.lastLabel ? opts.lastLabel(last) : fmtNetBillions(last.net).replace(' 億', ''));
+    .text(fmtNetBillions(last.net).replace(' 億', ''));
 
   container.replaceChildren(svg.node());
 }
@@ -2444,21 +2444,218 @@ function etfDailyRows() {
     .map(([date, v]) => ({ date, net: v.usd / v.aum * 100, usd: v.usd }));
 }
 
+// 價格折線的序列:單檔=每日淨值(NAV,美元),籃合計=AUM 加權的連鎖報酬指數(期初=100
+// ——籃內各檔價位量級不同,直接平均淨值無意義);日期含第一個快照日,折線比長條多一點
+function etfDailySeries() {
+  const basket = ETF_DAILY_BASKETS.find(b => b.key === ui.etfDailySel);
+  const syms = basket
+    ? ETF_FLOW_LIST.filter(e => e.group === basket.group).map(e => e.sym)
+    : [ui.etfDailySel];
+  const dateSet = new Set();
+  for (const s of syms) {
+    for (const d of Object.keys(state.etfSnap?.[s] ?? {})) dateSet.add(d);
+  }
+  const dates = [...dateSet].sort();
+  let prices;
+  if (!basket) {
+    const h = state.etfSnap?.[syms[0]] ?? {};
+    prices = dates.map(d => ({ date: d, v: h[d]?.nav })).filter(p => Number.isFinite(p.v));
+  } else {
+    prices = [];
+    let idx = 100;
+    for (let i = 0; i < dates.length; i++) {
+      if (i > 0) {
+        // 當日報酬 = Σ(前日 AUM 權重 × 淨值日報酬),只計前後兩日皆有淨值的檔
+        let num = 0, den = 0;
+        for (const s of syms) {
+          const a = state.etfSnap[s]?.[dates[i - 1]], b = state.etfSnap[s]?.[dates[i]];
+          if (Number.isFinite(a?.nav) && Number.isFinite(b?.nav) && Number.isFinite(a?.aum)) {
+            num += a.aum * (b.nav / a.nav);
+            den += a.aum;
+          }
+        }
+        if (den > 0) idx *= num / den;
+      }
+      prices.push({ date: dates[i], v: idx });
+    }
+  }
+  return { isBasket: !!basket, dates, prices, flows: etfDailyRows() };
+}
+
+// 價量並列的雙面板圖(與中國卡 510300 分時圖同構:上=價格線、下=量能柱):
+// 共用一個 band x 軸,量綱不同的價與量各自一個面板、不共用 y 軸(雙軸是 dataviz 禁手);
+// 逐日的價量背離(價漲柱紅/價跌柱藍)在這裡直接看得到
 function renderEtfDailyChart() {
   const container = $('#etfflow-daily-chart');
-  const rows = etfDailyRows();
-  if (!rows.length) {
+  const { isBasket, dates, prices, flows } = etfDailySeries();
+  if (!flows.length) {
     container.replaceChildren(el('p', 'etf-daily-empty',
       '日頻快照累積中:需至少兩個交易日的快照才能算出第一根長條(自 2026-07-31 起每交易日累積)。'));
     return;
   }
-  renderNetBarChart('#etfflow-daily-chart', rows, {
-    unitLabel: '佔規模 %',
-    minAbs: 0.2,   // 日頻佔比多在 ±1% 內,不能沿用億元長條的預設下限
-    height: 170,
-    tooltipText: (r) => `${r.net >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(r.usd)},佔規模 ${fmtPct(r.net)}`,
-    lastLabel: (r) => fmtPct(r.net),
+
+  const width = Math.max(320, container.clientWidth || 640);
+  const m = { top: 16, right: 12, bottom: 22, left: 56 };
+  const priceH = 86;    // 上面板(價格折線)高度
+  const gap = 18;       // 兩面板間距
+  const barH = 108;     // 下面板(申贖長條)高度
+  const height = m.top + priceH + gap + barH + m.bottom;
+  const barTop = m.top + priceH + gap;
+
+  const ink = cssVar('--ink');
+  const cGrid = cssVar('--grid');
+  const cMuted = cssVar('--text-muted');
+  const cText = cssVar('--text-primary');
+  const cIn = cssVar('--series-in');
+  const cOut = cssVar('--series-out');
+  const surface = cssVar('--surface-1');
+  const accent = cssVar('--chart-accent');
+
+  const x = d3.scaleBand()
+    .domain(dates)
+    .range([m.left, width - m.right])
+    .paddingInner(0.3).paddingOuter(0.1);
+  const cx = (d) => x(d) + x.bandwidth() / 2;
+
+  const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
+
+  // ---- 上面板:價格折線 ----
+  const pv = prices.map(p => p.v);
+  const span = d3.max(pv) - d3.min(pv) || Math.abs(pv[0]) * 0.01 || 1;
+  const yP = d3.scaleLinear()
+    .domain([d3.min(pv) - span * 0.15, d3.max(pv) + span * 0.15])
+    .range([m.top + priceH, m.top]);
+  const fmtPrice = (v) => v.toLocaleString('zh-TW', {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
   });
+  for (const t of yP.ticks(3)) {
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', yP(t)).attr('y2', yP(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 6).attr('y', yP(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .text(fmtPrice(t));
+  }
+  // 面板標題靠格線左緣起始(右對齊會往左溢出邊界被裁)
+  svg.append('text')
+    .attr('x', m.left).attr('y', m.top - 5)
+    .attr('font-size', 9.5).attr('fill', cMuted)
+    .text(isBasket ? '淨值指數(期初=100)' : '淨值(美元)');
+
+  const line = d3.line().x(p => cx(p.date)).y(p => yP(p.v));
+  svg.append('path')
+    .attr('d', line(prices))
+    .attr('fill', 'none')
+    .attr('stroke', ink)
+    .attr('stroke-width', 2)
+    .attr('stroke-linecap', 'round')
+    .attr('stroke-linejoin', 'round');
+  prices.forEach((p, i) => {
+    const last = i === prices.length - 1;
+    svg.append('circle')
+      .attr('cx', cx(p.date)).attr('cy', yP(p.v))
+      .attr('r', last ? 4 : 2.4)
+      .attr('fill', last ? accent : ink)
+      .attr('stroke', last ? ink : surface)
+      .attr('stroke-width', last ? 1.6 : 1.2);
+  });
+  // 只直接標最新一點的價格
+  const lastP = prices[prices.length - 1];
+  svg.append('text')
+    .attr('x', cx(lastP.date)).attr('y', yP(lastP.v) - 9)
+    .attr('text-anchor', 'end').attr('font-size', 10.5).attr('font-weight', 700)
+    .attr('fill', cText)
+    .text(fmtPrice(lastP.v));
+
+  // ---- 下面板:申贖佔規模 % 長條 ----
+  const maxAbs = Math.max(0.2, d3.max(flows, r => Math.abs(r.net)));   // 日頻佔比多在 ±1% 內
+  const yF = d3.scaleLinear()
+    .domain([-maxAbs * 1.15, maxAbs * 1.15])
+    .range([barTop + barH, barTop]);
+  for (const t of yF.ticks(4)) {
+    if (t === 0) continue;
+    svg.append('line')
+      .attr('x1', m.left).attr('x2', width - m.right)
+      .attr('y1', yF(t)).attr('y2', yF(t))
+      .attr('stroke', cGrid).attr('stroke-width', 1);
+    svg.append('text')
+      .attr('x', m.left - 6).attr('y', yF(t) + 3.5)
+      .attr('text-anchor', 'end').attr('font-size', 10).attr('fill', cMuted)
+      .text(t.toLocaleString('zh-TW'));
+  }
+  svg.append('text')
+    .attr('x', m.left).attr('y', barTop - 5)
+    .attr('font-size', 9.5).attr('fill', cMuted)
+    .text('申贖佔規模 %');
+  svg.append('line')
+    .attr('x1', m.left).attr('x2', width - m.right)
+    .attr('y1', yF(0)).attr('y2', yF(0))
+    .attr('stroke', ink).attr('stroke-width', 1.5);
+
+  for (const r of flows) {
+    const pos = r.net >= 0;
+    svg.append('rect')
+      .attr('x', x(r.date))
+      .attr('y', pos ? yF(r.net) : yF(0))
+      .attr('width', x.bandwidth())
+      .attr('height', Math.max(1.5, Math.abs(yF(r.net) - yF(0))))
+      .attr('rx', 2.5)
+      .attr('fill', pos ? cIn : cOut)
+      .attr('stroke', ink).attr('stroke-width', 1.2);
+  }
+  // 只直接標最新一根的佔比
+  const lastF = flows[flows.length - 1];
+  const ly = lastF.net >= 0
+    ? Math.max(barTop - 5, yF(lastF.net) - 5)
+    : Math.min(barTop + barH - 3, yF(lastF.net) + 12);
+  svg.append('text')
+    .attr('x', cx(lastF.date)).attr('y', ly)
+    .attr('text-anchor', 'middle').attr('font-size', 10.5).attr('font-weight', 700)
+    .attr('fill', cText)
+    .text(fmtPct(lastF.net));
+
+  // 日期標籤:約五個,最後一天永遠標
+  const every = Math.max(1, Math.ceil(dates.length / 5));
+  dates.forEach((d, i) => {
+    const isLast = i === dates.length - 1;
+    if (!isLast && (i % every !== 0 || dates.length - 1 - i < every / 2)) return;
+    svg.append('text')
+      .attr('x', cx(d)).attr('y', height - 6)
+      .attr('text-anchor', 'middle').attr('font-size', 10).attr('fill', cMuted)
+      .text(d.slice(5));
+  });
+
+  // 整欄透明熱區:一次 hover 同時看價與量(價量是否同步,tooltip 內直接對照)
+  const priceByDate = new Map(prices.map((p, i) => [p.date, { ...p, i }]));
+  const flowByDate = new Map(flows.map(r => [r.date, r]));
+  for (const d of dates) {
+    svg.append('rect')
+      .attr('x', x(d)).attr('y', m.top)
+      .attr('width', x.bandwidth()).attr('height', height - m.top - m.bottom)
+      .attr('fill', 'transparent')
+      .on('mouseenter mousemove', (ev) => {
+        const lines = [{ text: d, cls: 'tt-label' }];
+        const p = priceByDate.get(d);
+        if (p) {
+          const prev = p.i > 0 ? prices[p.i - 1].v : null;
+          const chg = prev ? ` (${fmtPct((p.v / prev - 1) * 100)})` : '';
+          lines.push({ text: `${isBasket ? '淨值指數' : '淨值'} ${fmtPrice(p.v)}${chg}`, cls: 'tt-value' });
+        }
+        const f = flowByDate.get(d);
+        lines.push({
+          text: f
+            ? `${f.net >= 0 ? '淨申購' : '淨贖回'} ${fmtUsdBillions(f.usd)},佔規模 ${fmtPct(f.net)}`
+            : '申贖:—(首個快照日無前一點可比)',
+          cls: 'tt-value',
+        });
+        showTooltip(lines, ev.clientX, ev.clientY);
+      })
+      .on('mouseleave', hideTooltip);
+  }
+
+  container.replaceChildren(svg.node());
 }
 
 // 觀察標的下拉:兩籃合計 + 各檔;清單固定,啟動時生成一次
