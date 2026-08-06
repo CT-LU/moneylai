@@ -2409,18 +2409,27 @@ function etfDailyPoints(sym) {
   return pts;
 }
 
+// 日頻視窗的起始日:跟隨卡上的統計期間切換(1 月/3 月/今年以來/1 年),
+// 讓浮層小圖與主圖長條看的是同一段時間;快照最早只到 2026-07-31,更長視窗顯示已累積的部分
+function etfDailyCutoff() {
+  if (ui.etfPeriod === 'YTD') return `${new Date().getUTCFullYear()}-01-01`;
+  const days = { '1M': 31, '3M': 92, '1Y': 366 }[ui.etfPeriod] ?? 31;
+  return isoDate(new Date(Date.now() - days * DAY_MS));
+}
+
 // 浮層內的價量雙面板小圖(與 510300 分時圖同構:上=淨值折線、下=申贖佔規模 % 長條):
 // 共用一個 band x 軸(日期=快照日,折線含首個快照日、比長條多一點),
 // 量綱不同的價與量各自一個面板不共用 y 軸(雙軸是 dataviz 禁手);
 // 本身就是 hover 浮層,內部不再掛 tooltip
 function renderEtfDailyPanel(container, sym) {
+  const cutoff = etfDailyCutoff();
   const h = state.etfSnap?.[sym];
-  const prices = h ? Object.keys(h).sort()
+  const prices = h ? Object.keys(h).sort().filter(d => d >= cutoff)
     .map(d => ({ date: d, v: h[d]?.nav })).filter(p => Number.isFinite(p.v)) : [];
-  const flows = etfDailyPoints(sym);
+  const flows = etfDailyPoints(sym).filter(p => p.date >= cutoff);
   if (!flows.length || prices.length < 2) {
     container.appendChild(el('p', 'etf-daily-empty',
-      '日頻快照累積中:需至少兩個交易日的快照才能畫出價量趨勢(自 2026-07-31 起每交易日累積)。'));
+      '此期間視窗內快照還不夠:需至少兩個交易日的快照才能畫出價量趨勢(自 2026-07-31 起每交易日累積)。'));
     return;
   }
 
@@ -2485,6 +2494,8 @@ function renderEtfDailyPanel(container, sym) {
     .attr('stroke-linejoin', 'round');
   prices.forEach((p, i) => {
     const last = i === prices.length - 1;
+    // 點多時(長視窗累積後)中間點只會糊成一團,只留末點強調
+    if (!last && prices.length > 40) return;
     svg.append('circle')
       .attr('cx', cx(p.date)).attr('cy', yP(p.v))
       .attr('r', last ? 3.5 : 2.2)
@@ -2524,6 +2535,8 @@ function renderEtfDailyPanel(container, sym) {
     .attr('y1', yF(0)).attr('y2', yF(0))
     .attr('stroke', ink).attr('stroke-width', 1.5);
 
+  // 長視窗累積後長條會變窄:窄於 3px 時描邊會比柱體還寬,直接省略
+  const barStroke = x.bandwidth() >= 3 ? 1 : 0;
   for (const r of flows) {
     const pos = r.net >= 0;
     svg.append('rect')
@@ -2531,9 +2544,9 @@ function renderEtfDailyPanel(container, sym) {
       .attr('y', pos ? yF(r.net) : yF(0))
       .attr('width', x.bandwidth())
       .attr('height', Math.max(1.5, Math.abs(yF(r.net) - yF(0))))
-      .attr('rx', 2)
+      .attr('rx', Math.min(2, x.bandwidth() / 3))
       .attr('fill', pos ? cIn : cOut)
-      .attr('stroke', ink).attr('stroke-width', 1);
+      .attr('stroke', ink).attr('stroke-width', barStroke);
   }
   const lastF = flows[flows.length - 1];
   const ly = lastF.net >= 0
@@ -2599,7 +2612,8 @@ function showEtfFlowPop(r, dv, per, ev) {
     pop.appendChild(el('div', 'tt-label',
       dv > 0 ? '※ 價量背離:價跌但有真金白銀承接' : '※ 價量背離:價漲但沒有新錢背書'));
   }
-  pop.appendChild(el('div', 'etf-pop-sub', '日頻價量趨勢(每日快照估算,約 T+1)'));
+  pop.appendChild(el('div', 'etf-pop-sub',
+    `日頻價量趨勢(${etfPeriodLabel()}視窗,每日快照估算,約 T+1)`));
   const chartBox = el('div', 'etf-pop-chart');
   pop.appendChild(chartBox);
   renderEtfDailyPanel(chartBox, r.sym);
