@@ -186,7 +186,7 @@ const state = {
 const ui = {
   twdWeeks: 1,
   etfPeriod: '1M',
-  etfSort: 'flow',   // flow=依流量佔規模 %、perf=依同期價格漲跌 %
+  etfBarMode: 'flow',   // 長條量綱:flow=流量佔規模 %、perf=同期價格漲跌 %(列順序一律依流量佔比,不隨此切換)
 };
 
 // ===== 小工具 =====
@@ -2088,7 +2088,7 @@ function fmtUsdBillions(v) {
   return `${v > 0 ? '+' : ''}${txt} 億美元`;
 }
 
-// 目前選定期間的資料列(依「流量佔規模 %」降冪;缺料的檔略過)
+// 目前選定期間的資料列(一律依「流量佔規模 %」降冪;缺料的檔略過)
 function etfFlowRows() {
   const q = state.etfFlows;
   if (!q) return [];
@@ -2103,12 +2103,8 @@ function etfFlowRows() {
       perf: Number.isFinite(perf) ? perf : null,   // 同期價格漲跌 %(缺值仍保留列)
     });
   }
-  // 排序可切換:量(流量佔規模)或價(同期價格,缺值排最後);
-  // 價排序下藍紅長條的錯落=價量不同步的整體圖像
-  if (ui.etfSort === 'perf') {
-    return rows.sort((a, b) =>
-      (b.perf ?? -Infinity) - (a.perf ?? -Infinity) || b.pct - a.pct);
-  }
+  // 列順序固定依流量佔規模降冪:卡上的切換只換長條量綱(資金流/價格)、不換順序,
+  // 切換時列不跳動,同一順序下對照兩張圖,長條長短不再遞減的地方就是價量不同步
   return rows.sort((a, b) => b.pct - a.pct);
 }
 
@@ -2170,10 +2166,14 @@ function renderEtfFlowStats(rows) {
   if (boxes.length) grid.replaceChildren(...boxes);
 }
 
-// 橫向 diverging 長條:每檔一列,長度 = 流量佔自身規模 %(跨檔可比),
-// 藍=淨申購(流入)、紅=淨贖回(流出),與全站資料色一致;列依流量佔比排序。
-// 右側兩欄文字:流量佔規模 % 與「同期價格」漲跌 %(量綱不同,價格只以文字並列
-// 不入座標軸——雙軸是 dataviz 禁手);價量背離列於價格後標 ※ 並加粗
+// 橫向 diverging 長條:每檔一列,列順序一律依流量佔規模降冪(切換量綱時列不跳動)。
+// 長條量綱由 ui.etfBarMode 切換:
+//   flow = 流量佔自身規模 %(跨檔可比),藍=淨申購(流入)、紅=淨贖回(流出),與全站資料色一致
+//   perf = 同期價格漲跌 %,改用全站漲跌色(紅漲綠跌);整組換色系正好提示「量綱換了」,
+//          不會與藍/紅的流入流出語意打架
+// 兩模式共用同一個列順序,對照著看:長條長短不再遞減的地方 = 價量不同步
+// 右側兩欄文字(流量佔規模 % 與「同期價格」漲跌 %)兩模式都不動——欄位穩定才好橫向掃;
+// 價量背離列於價格後標 ※ 並加粗
 function renderEtfFlowChart(rows) {
   const container = $('#etfflow-chart');
   const width = Math.max(320, container.clientWidth || 720);
@@ -2190,12 +2190,20 @@ function renderEtfFlowChart(rows) {
   const cMuted = cssVar('--text-muted');
   const cIn = cssVar('--series-in');
   const cOut = cssVar('--series-out');
+  const cUp = cssVar('--delta-up');      // 價格模式:紅漲
+  const cDown = cssVar('--delta-down');  // 價格模式:綠跌
+
+  // 長條量綱:資金流=流量佔規模 %(必有值)、價格=同期價格漲跌 %(可能缺值)
+  const byPerf = ui.etfBarMode === 'perf';
+  const barVal = (r) => byPerf ? r.perf : r.pct;
 
   const x0 = m.left + labelW;
   const x1 = width - m.right - priceW - valueW;
   const xFlowCol = width - m.right - priceW - valueW + 8;   // 流量佔規模 % 文字欄
   const xPriceCol = width - m.right - priceW + 8;           // 同期價格 % 文字欄
-  const maxAbs = Math.max(0.5, d3.max(rows, r => Math.abs(r.pct)));
+  // 價格的量級比流量佔比大一個檔次,軸的下限跟著放寬
+  const maxAbs = Math.max(byPerf ? 1 : 0.5,
+    d3.max(rows, r => Number.isFinite(barVal(r)) ? Math.abs(barVal(r)) : 0) ?? 0);
   const x = d3.scaleLinear().domain([-maxAbs, maxAbs]).range([x0, x1]);
 
   const svg = d3.create('svg').attr('viewBox', `0 0 ${width} ${height}`).attr('role', 'img');
@@ -2220,7 +2228,8 @@ function renderEtfFlowChart(rows) {
   const per = etfPeriodLabel();
   rows.forEach((r, i) => {
     const y = m.top + i * rowH;
-    const pos = r.pct >= 0;
+    const v = barVal(r);        // 目前量綱下這一列的長條值
+    const pos = v >= 0;
     const dv = etfDiverge(r);
 
     svg.append('text')
@@ -2229,13 +2238,15 @@ function renderEtfFlowChart(rows) {
       .attr('fill', cText)
       .text(r.name);
 
-    svg.append('rect')
-      .attr('x', pos ? x(0) : x(r.pct))
+    // 缺同期價格的檔在價格模式不畫長條(畫 0 會變成貼著零線的小塊,誤讀成「沒漲跌」);
+    // 該列仍在,名稱與右欄照常顯示「—」
+    if (Number.isFinite(v)) svg.append('rect')
+      .attr('x', pos ? x(0) : x(v))
       .attr('y', y + 4.5)
-      .attr('width', Math.max(1.5, Math.abs(x(r.pct) - x(0))))
+      .attr('width', Math.max(1.5, Math.abs(x(v) - x(0))))
       .attr('height', rowH - 9)
       .attr('rx', 2.5)
-      .attr('fill', pos ? cIn : cOut)
+      .attr('fill', byPerf ? (pos ? cUp : cDown) : (pos ? cIn : cOut))
       .attr('stroke', ink).attr('stroke-width', 1.2);
 
     // 價量背離列:兩個數字欄整段刷 wheat 高亮底(全站高亮慣例,配深字),
@@ -2290,10 +2301,27 @@ function renderEtfFlowLegend() {
     chip.appendChild(document.createTextNode(text));
     return chip;
   };
+  // 無色塊的純文字說明(價格模式要交代長條換了量綱、但列順序沒換)
+  const note = (text) => {
+    const chip = el('span', 'twd-chip');
+    chip.appendChild(document.createTextNode(text));
+    return chip;
+  };
+  const hi = mk(cssVar('--mem-yellow'), '高亮※=價量背離(價格與資金流不同步)');
+
+  if (ui.etfBarMode === 'perf') {
+    box.replaceChildren(
+      mk(cssVar('--delta-up'), '長條=同期價格上漲'),
+      mk(cssVar('--delta-down'), '同期價格下跌'),
+      hi,
+      note('列順序仍依資金流大→小'),
+    );
+    return;
+  }
   box.replaceChildren(
     mk(cssVar('--series-in'), '淨申購=真金白銀流入'),
     mk(cssVar('--series-out'), '淨贖回=資金撤出'),
-    mk(cssVar('--mem-yellow'), '高亮※=價量背離(價格與資金流不同步)'),
+    hi,
   );
 }
 
@@ -2796,8 +2824,8 @@ function main() {
 
   initWeekToggle('#twd-weeks', 'twdWeeks', renderTwdCard);
   initPeriodToggle('#etfflow-period', 'etfPeriod', renderEtfFlowCard);
-  // 排序切換沿用同一套 seg-toggle 機制(按鈕一樣掛 data-period 屬性)
-  initPeriodToggle('#etfflow-sort', 'etfSort', renderEtfFlowCard);
+  // 長條量綱切換(資金流/價格)沿用同一套 seg-toggle 機制(按鈕一樣掛 data-period 屬性)
+  initPeriodToggle('#etfflow-sort', 'etfBarMode', renderEtfFlowCard);
 
   // 卡片說明折疊:滑鼠 hover 走純 CSS,點擊切換 .open 供觸控裝置開合
   for (const p of document.querySelectorAll('.card-desc')) {
