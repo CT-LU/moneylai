@@ -970,7 +970,7 @@ function renderBondRead(data, vix) {
 
   // 股市端:VIX 水位 + 與債市方向合讀。VIX = 幫美股買保險的價格
   // (由 S&P 500 選擇權反推的未來 30 天預期波動):愈高 = 愈多人花錢防跌
-  let vixText = '';
+  let vixItem = null;
   if (vix && Number.isFinite(vix.dW)) {
     const level = vix.now >= 30 ? '恐慌區(>30):保險不計價格地搶買,常見於暴跌當下——歷史上這種極端有時反而離底部不遠'
       : vix.now >= 20 ? '避險區(20–30):幫股票買保險明顯變貴,投資人正花錢防跌,情緒轉向防禦'
@@ -979,8 +979,8 @@ function renderBondRead(data, vix) {
     let combo = '';
     if (vix.dW > 1 && d10 < -TH) combo = '——與資金湧入長債同向,股債同步發出避險訊號';
     else if (vix.dW < -1 && d10 > TH) combo = '——與殖利率走升同向,整體偏風險偏好';
-    vixText = `股市端:VIX ${vix.now.toFixed(1)}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)` +
-      `——幫美股買保險的價格,愈高=愈多人花錢防跌。${level}${combo}。`;
+    const subs = [`VIX ${vix.now.toFixed(1)}(週${vix.dW > 0 ? '+' : ''}${vix.dW.toFixed(1)} 點)` +
+      `——幫美股買保險的價格,愈高=愈多人花錢防跌。${level}${combo}。`];
     // 期限結構:現貨 ÷ 近月期貨。平時期貨比現貨貴(contango,比值 <1);
     // 現貨飆過期貨(>1,backwardation)= 市場最怕的是「現在」,經典的恐慌結構
     const fut = state.scanner?.[VX1_SYM];
@@ -989,14 +989,16 @@ function renderBondRead(data, vix) {
       const read = ratio > 1 ? '現貨飆過期貨(backwardation):市場最怕的是「現在」,恐慌集中在當下的經典結構'
         : ratio > 0.97 ? '現貨逼近期貨,結構偏平——恐慌再升溫就會翻進 backwardation'
         : '期貨比現貨貴(contango):市場覺得眼前還好、波動之後才會變高,屬常態結構';
-      vixText += `期限結構(現貨/近月期貨)${ratio.toFixed(2)}:${read}。`;
+      subs.push(`期限結構(現貨/近月期貨)${ratio.toFixed(2)}:${read}。`);
     }
+    // 只有一條時不必分行(避免孤零零的 · 符號)
+    vixItem = subs.length > 1 ? readSubs('股市端:', subs) : `股市端:${subs[0]}`;
   }
 
   setRead(p, tag, [
     text,
     el('span', spreadBp < 0 ? 'warn' : '', spreadText),
-    vixText || null,
+    vixItem,
   ], '一週前與一月前為以 TradingView 表現欄位反推的估值。');
 }
 
@@ -1018,9 +1020,11 @@ function renderRiskRead() {
     const verdict = bp === null || Math.abs(bp) < 3 ? '本週變化有限,套利盤按兵不動'
       : bp > 0 ? '本週走闊:誘因升溫但不等於 risk-on——常來自美債殖利率上升,對股債反而是壓力,真正警訊在收窄端'
       : '本週收窄:平倉壓力升溫,收得又快又急時常拖累全球風險資產(2024-08 即一例)';
-    parts.push(`套利端:美日 10 年利差 ${sp.now.toFixed(2)} 個百分點` +
+    parts.push(readSubs(
+      `套利端:美日 10 年利差 ${sp.now.toFixed(2)} 個百分點` +
       (bp === null ? '' : `(週${fmtBp(bp, 0)})`) +
-      `=借日圓買美元資產這門套利的毛利。${lvl};${verdict}。`);
+      '=借日圓買美元資產這門套利的毛利。',
+      [`目前水位:${lvl}。`, `${verdict}。`]));
   }
 
   // HYG=借錢給體質較差公司的債(利息高、怕倒帳)、LQD=借給績優公司;
