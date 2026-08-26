@@ -400,6 +400,13 @@ section { margin-bottom: 34px; }
   margin-right: 8px;
 }
 .bond-read .read-item { display: block; margin-top: 6px; }
+/* 一項結論內的子條列(對照組/價量背離):· 前綴掛在縮排外,各條分行 */
+.bond-read .read-sub {
+  display: block;
+  margin: 4px 0 0 1.6em;
+  text-indent: -0.85em;
+  font-weight: 600;
+}
 .bond-read .read-note {
   display: block; margin-top: 8px;
   font-size: 12px; font-weight: 400; color: #6f6a66;

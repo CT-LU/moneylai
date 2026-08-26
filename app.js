@@ -215,6 +215,15 @@ function setRead(p, tag, items, note) {
   p.replaceChildren(...kids);
 }
 
+// 一項結論內再切子條列:標題後每條各佔一行(· 前綴、縮排),
+// 避免多組並列的分歧敘述串成一長段難以掃讀。回傳 fragment 供 setRead 的 items 使用
+function readSubs(label, parts) {
+  const frag = document.createDocumentFragment();
+  frag.append(label);
+  parts.forEach((t) => frag.append(el('span', 'read-sub', `· ${t}`)));
+  return frag;
+}
+
 function isoDate(d) { return d.toISOString().slice(0, 10); }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2395,7 +2404,7 @@ function renderEtfFlowRead(rows) {
   pair('AMEX:USO', 'AMEX:XLE', (u, e) => u.pct > e.pct
     ? `油價 ETF USO(${fmtPct(u.pct)})比能源股 XLE(${fmtPct(e.pct)})吸金——資金直接押油價漲,多於押油公司這門生意`
     : `能源股 XLE(${fmtPct(e.pct)})比油價 ETF USO(${fmtPct(u.pct)})吸金——資金要的是油公司的現金流與股息,不是賭油價方向`);
-  if (contrasts.length) items.push(`對照組:${contrasts.join(';')}。`);
+  if (contrasts.length) items.push(readSubs('對照組亮點:', contrasts));
 
   // 價量背離:價格與真金白銀唱反調的檔,是這張卡獨有的訊號(依流量佔比取最顯著三檔)
   const diverged = rows.filter(r => etfDiverge(r) !== 0)
@@ -2403,9 +2412,8 @@ function renderEtfFlowRead(rows) {
   if (diverged.length) {
     const txt = diverged.map(r => etfDiverge(r) > 0
       ? `${r.name} 價跌 ${fmtPct(r.perf, 1)} 但淨申購佔規模 ${fmtPct(r.pct)}——下跌有真金白銀承接`
-      : `${r.name} 價漲 ${fmtPct(r.perf, 1)} 但淨贖回佔規模 ${fmtPct(r.pct)}——漲勢沒有新錢背書`)
-      .join(';');
-    items.push(`價量背離(※):${txt}。`);
+      : `${r.name} 價漲 ${fmtPct(r.perf, 1)} 但淨贖回佔規模 ${fmtPct(r.pct)}——漲勢沒有新錢背書`);
+    items.push(readSubs('價量背離(※):', txt));
   }
 
   setRead(p, 'ETF 申贖合讀', items,
